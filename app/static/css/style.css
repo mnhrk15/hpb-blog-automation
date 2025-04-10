@@ -67,6 +67,7 @@ header {
     flex-wrap: wrap;
     gap: 12px;
     margin-bottom: 1rem;
+    justify-content: center;
 }
 
 .image-preview-item {
@@ -74,7 +75,8 @@ header {
     border-radius: 8px;
     overflow: hidden;
     width: calc(25% - 9px);
-    min-width: 120px;
+    min-width: 100px;
+    max-width: 120px;
     box-shadow: 0 2px 4px rgba(0,0,0,0.04);
     transition: all 0.2s;
 }
@@ -86,8 +88,67 @@ header {
 
 .preview-image {
     width: 100%;
-    height: 150px;
+    height: 80px;
     object-fit: cover;
+}
+
+/* アップロードプレビュー用のスタイル */
+.preview-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 15px;
+    justify-content: center;
+}
+
+.preview-item {
+    position: relative;
+    width: 150px;
+    height: 150px;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    margin-bottom: 10px;
+}
+
+.preview-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 8px;
+}
+
+.remove-btn {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    background: rgba(255,255,255,0.8);
+    width: 25px;
+    height: 25px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    color: #e74c3c;
+    transition: all 0.2s;
+}
+
+.remove-btn:hover {
+    background: rgba(255,255,255,1);
+    transform: scale(1.1);
+}
+
+/* 単一画像表示用 */
+.single-image-preview {
+    max-width: 200px;
+    margin: 0 auto;
+}
+
+.single-image-preview .preview-image {
+    height: 150px;
 }
 
 /* アップロード領域 */
@@ -253,7 +314,13 @@ header {
     }
     
     .image-preview-item {
-        width: calc(50% - 6px);
+        width: calc(33.33% - 8px);
+        max-width: 100px;
+    }
+    
+    .preview-item {
+        width: 120px;
+        height: 120px;
     }
 }
 
@@ -264,5 +331,15 @@ header {
     
     .btn {
         padding: 0.5rem 1rem;
+    }
+    
+    .image-preview-item {
+        width: calc(50% - 6px);
+        max-width: 90px;
+    }
+    
+    .preview-item {
+        width: 100px;
+        height: 100px;
     }
 } 

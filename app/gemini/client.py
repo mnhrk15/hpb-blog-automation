@@ -67,7 +67,7 @@ class GeminiClient:
             
             # コンテンツ生成リクエスト
             response = self.model.generate_content(
-                [prompt] + [{"inlineData": part} for part in image_parts],
+                [prompt] + [{"inline_data": part} for part in image_parts],
                 generation_config=generation_config
             )
             

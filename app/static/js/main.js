@@ -19,6 +19,12 @@ document.addEventListener('DOMContentLoaded', function() {
     // テキストエリアの文字数カウント
     setupCharacterCounter();
     
+    // ページ位置の復元
+    restoreScrollPosition();
+    
+    // ページ移動時に位置を保存
+    window.addEventListener('beforeunload', saveScrollPosition);
+    
     // ステップナビゲーションのスクロール処理
     highlightCurrentStep();
 });
@@ -30,6 +36,9 @@ function setupFormLoading() {
     const forms = document.querySelectorAll('form:not(.no-loading)');
     forms.forEach(form => {
         form.addEventListener('submit', function() {
+            // ページ位置を保存
+            saveScrollPosition();
+            
             // ローディングオーバーレイを作成
             const loadingOverlay = document.createElement('div');
             loadingOverlay.className = 'loading-overlay';
@@ -40,8 +49,6 @@ function setupFormLoading() {
             const loadingText = document.createElement('div');
             loadingText.className = 'loading-text';
             loadingText.textContent = '処理中...';
-            loadingText.style.color = 'white';
-            loadingText.style.marginTop = '20px';
             
             loadingOverlay.appendChild(spinner);
             loadingOverlay.appendChild(loadingText);
@@ -58,8 +65,15 @@ function setupCharacterCounter() {
     const titleInput = document.getElementById('blog-title');
     
     if (contentTextarea) {
+        // 既存のカウンタがある場合は削除
+        const existingCounter = document.getElementById('content-counter');
+        if (existingCounter) {
+            existingCounter.remove();
+        }
+        
         const contentCount = document.createElement('div');
         contentCount.className = 'text-muted text-end small';
+        contentCount.id = 'content-counter';
         contentCount.innerHTML = `<span id="content-count">${contentTextarea.value.length}</span>/1000文字`;
         contentTextarea.parentNode.insertBefore(contentCount, contentTextarea.nextSibling);
         
@@ -78,8 +92,15 @@ function setupCharacterCounter() {
     }
     
     if (titleInput) {
+        // 既存のカウンタがある場合は削除
+        const existingCounter = document.getElementById('title-counter');
+        if (existingCounter) {
+            existingCounter.remove();
+        }
+        
         const titleCount = document.createElement('div');
         titleCount.className = 'text-muted text-end small';
+        titleCount.id = 'title-counter';
         titleCount.innerHTML = `<span id="title-count">${titleInput.value.length}</span>/25文字`;
         titleInput.parentNode.insertBefore(titleCount, titleInput.nextSibling);
         
@@ -95,6 +116,25 @@ function setupCharacterCounter() {
                 titleCount.classList.add('text-muted');
             }
         });
+    }
+}
+
+/**
+ * ページスクロール位置を保存
+ */
+function saveScrollPosition() {
+    sessionStorage.setItem('scrollPosition', window.scrollY);
+}
+
+/**
+ * 保存されたページスクロール位置を復元
+ */
+function restoreScrollPosition() {
+    const scrollPosition = sessionStorage.getItem('scrollPosition');
+    if (scrollPosition) {
+        setTimeout(() => {
+            window.scrollTo(0, parseInt(scrollPosition));
+        }, 100);
     }
 }
 

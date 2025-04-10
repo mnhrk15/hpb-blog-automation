@@ -165,13 +165,14 @@ def save_content():
         flash('内容は必須です', 'error')
         return redirect(url_for('blog.generate'))
     
-    # ここでデータベースに保存または別の処理を行う
-    # 例: blog_post = BlogPost(title=title, content=content)
-    # db.session.add(blog_post)
-    # db.session.commit()
+    # 編集された内容をセッションに保存
+    current_content = session.get(GENERATED_CONTENT_KEY, {})
+    current_content['title'] = title
+    current_content['content'] = content
+    session[GENERATED_CONTENT_KEY] = current_content
     
-    flash('ブログを保存しました', 'success')
-    return redirect(url_for('blog.index'))
+    flash('ブログ内容を保存しました', 'success')
+    return redirect(url_for('blog.generate'))
 
 @bp.route('/hair-info', methods=['GET'])
 @login_required
