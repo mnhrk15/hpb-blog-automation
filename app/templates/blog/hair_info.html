@@ -1,0 +1,112 @@
+{% extends 'base.html' %}
+
+{% block title %}ヘアスタイル分析結果{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-12 mb-4">
+            <h2 class="text-center">ヘアスタイル分析結果</h2>
+            <hr>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- 画像表示部分 -->
+        <div class="col-md-6 mb-4">
+            <div class="card">
+                <div class="card-header">解析画像</div>
+                <div class="card-body text-center">
+                    {% if image_url %}
+                        <img src="{{ image_url }}" class="img-fluid rounded" alt="ヘアスタイル画像" style="max-height: 400px;">
+                    {% else %}
+                        <div class="alert alert-warning">
+                            画像が見つかりません
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- ヘアスタイル情報表示部分 -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">ヘアスタイル情報</div>
+                <div class="card-body">
+                    {% if hair_info %}
+                        <table class="table">
+                            <tbody>
+                                {% if hair_info.hair_type %}
+                                <tr>
+                                    <th>ヘアスタイルタイプ</th>
+                                    <td>{{ hair_info.hair_type }}</td>
+                                </tr>
+                                {% endif %}
+                                
+                                {% if hair_info.color %}
+                                <tr>
+                                    <th>カラー</th>
+                                    <td>{{ hair_info.color }}</td>
+                                </tr>
+                                {% endif %}
+                                
+                                {% if hair_info.features %}
+                                <tr>
+                                    <th>特徴</th>
+                                    <td>
+                                        {% if hair_info.features is string %}
+                                            {{ hair_info.features }}
+                                        {% else %}
+                                            <ul class="list-unstyled mb-0">
+                                                {% for feature in hair_info.features %}
+                                                    <li>{{ feature }}</li>
+                                                {% endfor %}
+                                            </ul>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endif %}
+                                
+                                {% if hair_info.face_shape %}
+                                <tr>
+                                    <th>似合う顔型</th>
+                                    <td>{{ hair_info.face_shape }}</td>
+                                </tr>
+                                {% endif %}
+                                
+                                {% if hair_info.trends %}
+                                <tr>
+                                    <th>トレンド情報</th>
+                                    <td>
+                                        {% if hair_info.trends is string %}
+                                            {{ hair_info.trends }}
+                                        {% else %}
+                                            <ul class="list-unstyled mb-0">
+                                                {% for trend in hair_info.trends %}
+                                                    <li>{{ trend }}</li>
+                                                {% endfor %}
+                                            </ul>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    {% else %}
+                        <div class="alert alert-warning">
+                            ヘアスタイル情報が見つかりません
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mt-4">
+        <div class="col-md-12 text-center">
+            <a href="{{ url_for('blog.generate') }}" class="btn btn-primary">戻る</a>
+            <a href="{{ url_for('blog.generate_content') }}" class="btn btn-success">この情報でブログを生成</a>
+        </div>
+    </div>
+</div>
+{% endblock %} 

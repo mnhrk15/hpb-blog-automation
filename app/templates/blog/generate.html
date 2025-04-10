@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}ブログ生成 | HotPepper Beauty ブログ自動生成・投稿アプリ{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center">
+            <h2>ブログ生成・編集</h2>
+            <a href="{{ url_for('blog.index') }}" class="btn btn-outline-secondary">画像選択に戻る</a>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h3 class="h5 mb-0">アップロードされた画像</h3>
+            </div>
+            <div class="card-body">
+                <div class="preview-grid">
+                    {% for image in images %}
+                    <div class="preview-item">
+                        <img src="{{ url_for('static', filename='uploads/' + image) }}" alt="アップロードされた画像" class="img-fluid">
+                    </div>
+                    {% endfor %}
+                </div>
+                
+                {% if not generated_content %}
+                <div class="mt-3">
+                    <form method="post" action="{{ url_for('blog.generate_content') }}">
+                        <input type="hidden" name="images" value="{{ images|join(',') }}">
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="bi bi-magic"></i> ブログ内容を生成
+                        </button>
+                    </form>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-8">
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h3 class="h5 mb-0">ブログ内容{% if generated_content %} (編集可能){% endif %}</h3>
+            </div>
+            <div class="card-body">
+                {% if generated_content %}
+                <form method="post" action="{{ url_for('blog.save_content') }}">
+                    <div class="mb-3">
+                        <label for="blog-title" class="form-label">タイトル</label>
+                        <input type="text" class="form-control" id="blog-title" name="title" value="{{ generated_content.title }}" required>
+                        <div class="form-text">全角25文字以内</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="blog-content" class="form-label">本文</label>
+                        <textarea class="form-control" id="blog-content" name="content" rows="12" required>{{ generated_content.content }}</textarea>
+                        <div class="form-text">1000文字以内</div>
+                    </div>
+                    
+                    <input type="hidden" name="images" value="{{ images|join(',') }}">
+                    
+                    <div class="d-flex justify-content-between">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check2"></i> 内容を確定
+                        </button>
+                        <a href="{{ url_for('blog.generate_content') }}?regenerate=true&images={{ images|join(',') }}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-clockwise"></i> 再生成
+                        </a>
+                    </div>
+                </form>
+                {% else %}
+                <div class="text-center py-5">
+                    <p class="text-muted">
+                        「ブログ内容を生成」ボタンをクリックすると、AIがアップロードされた画像からブログ内容を生成します。
+                    </p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

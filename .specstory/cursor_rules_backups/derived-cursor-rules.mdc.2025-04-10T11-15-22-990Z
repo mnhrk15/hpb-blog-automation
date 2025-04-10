@@ -1,0 +1,31 @@
+
+## PROJECT OVERVIEW
+This section provides a high-level overview of the project.  Further details can be found in the other sections of this document.
+
+## CODE STYLE
+Adhere to PEP 8 style guidelines for Python code.  Further style guides may be added as needed.
+
+## FOLDER ORGANIZATION
+The project should follow a standard folder structure. Details on the specific structure will be added here as the project evolves.
+
+## TECH STACK
+Python (version to be specified)
+
+## PROJECT-SPECIFIC STANDARDS
+All implementations must strictly adhere to the requirements defined in `@requirements-definition.md`.  Thorough understanding of this document is mandatory before starting any implementation work.
+
+## WORKFLOW & RELEASE RULES
+Workflow and release rules will be detailed here as the project progresses.
+
+## REFERENCE EXAMPLES
+Reference examples will be added to this section as needed.
+
+## PROJECT DOCUMENTATION & CONTEXT SYSTEM
+This project utilizes markdown files for documentation.  The `@requirements-definition.md` file is a critical component of the project and should be thoroughly reviewed.
+
+## DEBUGGING
+Debugging strategies and best practices will be added here.
+
+## FINAL DOs AND DON'Ts
+- DO: Carefully read and understand `@requirements-definition.md` before starting any coding.
+- DON'T: Begin coding without a complete understanding of the requirements.
