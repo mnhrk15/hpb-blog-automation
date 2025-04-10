@@ -9,6 +9,7 @@ from app.utils.image import get_image_url
 from app.gemini.extractor import HairStyleExtractor
 from app.scraper.stylist import StylistScraper
 from app.scraper.coupon import CouponScraper
+from app.salon_board import SalonBoardPoster
 
 # 画像ファイルの一時保存用セッションキー
 UPLOADED_IMAGES_KEY = 'blog_uploaded_images'
@@ -18,6 +19,10 @@ SALON_URL_KEY = 'salon_url'
 STYLISTS_KEY = 'stylists'
 COUPONS_KEY = 'coupons'
 SELECTED_TEMPLATE_KEY = 'selected_template'
+SALON_BOARD_USER_ID_KEY = 'salon_board_user_id'
+SALON_BOARD_PASSWORD_KEY = 'salon_board_password'
+SALON_BOARD_STYLIST_ID_KEY = 'salon_board_stylist_id'
+SALON_BOARD_SELECTED_COUPONS_KEY = 'salon_board_selected_coupons'
 
 @bp.route('/')
 @login_required
@@ -267,4 +272,72 @@ def prepare_post():
     
     # 投稿準備画面に遷移（ここではまだ実装せず、将来の拡張用に置いておく）
     flash('投稿準備が完了しました。サロンボードへのログイン情報を入力してください。', 'success')
+    return redirect(url_for('blog.generate'))
+
+@bp.route('/post-to-salon-board', methods=['POST'])
+@login_required
+def post_to_salon_board():
+    """サロンボードにブログを投稿する"""
+    # 必要な情報がすべて揃っているか確認
+    uploaded_images = session.get(UPLOADED_IMAGES_KEY, [])
+    if not uploaded_images:
+        flash('画像がアップロードされていません', 'error')
+        return redirect(url_for('blog.generate'))
+    
+    generated_content = session.get(GENERATED_CONTENT_KEY, {})
+    if not generated_content or not generated_content.get('title') or not generated_content.get('content'):
+        flash('ブログ内容が生成されていません', 'error')
+        return redirect(url_for('blog.generate'))
+    
+    # サロンボードのログイン情報
+    user_id = request.form.get('salon_board_user_id', '').strip()
+    password = request.form.get('salon_board_password', '').strip()
+    
+    if not user_id or not password:
+        flash('サロンボードのユーザーIDとパスワードを入力してください', 'error')
+        return redirect(url_for('blog.generate'))
+    
+    # スタイリストIDの取得
+    stylist_id = request.form.get('stylist_id', '').strip()
+    if not stylist_id:
+        flash('スタイリストを選択してください', 'error')
+        return redirect(url_for('blog.generate'))
+    
+    # クーポン名の取得
+    selected_coupons = request.form.getlist('selected_coupons')
+    
+    # テンプレートの取得
+    template = session.get(SELECTED_TEMPLATE_KEY, '')
+    
+    # 画像のフルパスを取得
+    image_full_paths = [os.path.join(current_app.config['UPLOAD_FOLDER'], img) for img in uploaded_images]
+    
+    # ブログデータの作成
+    blog_data = {
+        'title': generated_content['title'],
+        'content': generated_content['content'],
+        'stylist_id': stylist_id,
+        'image_paths': image_full_paths,
+        'coupon_names': selected_coupons,
+        'template': template
+    }
+    
+    # ログイン情報とスタイリストIDをセッションに保存（パスワードは保存しない）
+    session[SALON_BOARD_USER_ID_KEY] = user_id
+    session[SALON_BOARD_STYLIST_ID_KEY] = stylist_id
+    session[SALON_BOARD_SELECTED_COUPONS_KEY] = selected_coupons
+    
+    # SalonBoardPosterのインスタンスを作成（デバッグしやすいようにヘッドフルモード）
+    poster = SalonBoardPoster(headless=False, slow_mo=200)
+    
+    try:
+        # サロンボードへの投稿を実行
+        if poster.execute_post(user_id, password, blog_data):
+            flash('サロンボードへのブログ投稿が完了しました', 'success')
+        else:
+            flash('サロンボードへの投稿に失敗しました。詳細はログを確認してください。', 'error')
+    except Exception as e:
+        current_app.logger.error(f"サロンボード投稿エラー: {str(e)}")
+        flash(f'サロンボードへの投稿中にエラーが発生しました: {str(e)}', 'error')
+    
     return redirect(url_for('blog.generate')) 

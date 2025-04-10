@@ -43,3 +43,6 @@ Thumbs.db
 
 # アップロードされた画像
 uploads/
+
+.specstory/
+tests/

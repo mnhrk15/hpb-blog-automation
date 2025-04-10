@@ -1,14 +1,17 @@
 # Web アプリケーション
-Flask==2.3.3
-Werkzeug==2.3.7
+Flask==2.2.3
+Werkzeug==2.2.3
 python-dotenv==1.0.0
+flask-wtf==1.1.1
 
 # ブラウザ自動操作
-playwright==1.41.2
+playwright==1.40.0
 
 # AI 画像処理・テキスト生成
 google-generativeai==0.3.2
 Pillow==10.1.0
+requests==2.31.0
+beautifulsoup4==4.12.2
 
 # 画像処理
 pybase64==1.3.1

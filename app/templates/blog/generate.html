@@ -120,26 +120,26 @@
         </div>
         
         <!-- スタイリスト・クーポン選択 -->
-        <form method="post" action="{{ url_for('blog.prepare_post') }}" id="post-form" class="mb-0">
+        <form method="post" action="{{ url_for('blog.post_to_salon_board') }}" id="post-form" class="mb-0">
             <div class="row">
                 <div class="col-md-6 mb-3">
                     <label for="stylist-select" class="form-label">投稿者（スタイリスト）</label>
                     <select class="form-select" id="stylist-select" name="stylist_id" required>
                         <option value="" disabled selected>選択してください</option>
                         {% for stylist in stylists %}
-                        <option value="{{ stylist.id }}">{{ stylist.name }}</option>
+                        <option value="{{ stylist.id }}" {% if session.get('salon_board_stylist_id') == stylist.id %}selected{% endif %}>{{ stylist.name }}</option>
                         {% endfor %}
                     </select>
                 </div>
                 
                 <div class="col-md-6 mb-3">
                     <label for="coupon-select" class="form-label">クーポン選択</label>
-                    <select class="form-select" id="coupon-select" name="coupons">
-                        <option value="" selected>クーポンなし</option>
+                    <select class="form-select" id="coupon-select" name="selected_coupons" multiple>
                         {% for coupon in coupons %}
-                        <option value="{{ coupon.name }}">{{ coupon.name }}</option>
+                        <option value="{{ coupon.name }}" {% if coupon.name in session.get('salon_board_selected_coupons', []) %}selected{% endif %}>{{ coupon.name }}</option>
                         {% endfor %}
                     </select>
+                    <small class="text-muted">複数選択する場合はCtrl+クリック</small>
                 </div>
             </div>
         {% endif %}
@@ -154,19 +154,24 @@
         
         <div class="row">
             <div class="col-md-6 mb-3">
-                <label for="salon-id" class="form-label">サロンボードID</label>
+                <label for="salon-board-user-id" class="form-label">サロンボードID</label>
                 <div class="input-group">
                     <span class="input-group-text"><i class="bi bi-person"></i></span>
-                    <input type="text" class="form-control" id="salon-id" name="salon_id" required>
+                    <input type="text" class="form-control" id="salon-board-user-id" name="salon_board_user_id" value="{{ session.get('salon_board_user_id', '') }}" required>
                 </div>
             </div>
             <div class="col-md-6 mb-3">
-                <label for="salon-password" class="form-label">サロンボードパスワード</label>
+                <label for="salon-board-password" class="form-label">サロンボードパスワード</label>
                 <div class="input-group">
                     <span class="input-group-text"><i class="bi bi-lock"></i></span>
-                    <input type="password" class="form-control" id="salon-password" name="salon_password" required>
+                    <input type="password" class="form-control" id="salon-board-password" name="salon_board_password" required>
                 </div>
+                <small class="text-muted">※パスワードはアプリに保存されません</small>
             </div>
+        </div>
+        
+        <div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle-fill"></i> 投稿処理中にロボット認証が検出された場合、処理は自動的に中断されます。
         </div>
         
         <button type="submit" class="btn btn-danger btn-lg w-100">

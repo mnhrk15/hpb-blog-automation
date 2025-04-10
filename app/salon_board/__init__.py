@@ -1,0 +1,1 @@
+from app.salon_board.poster import SalonBoardPoster 
