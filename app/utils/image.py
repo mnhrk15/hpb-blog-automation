@@ -32,7 +32,7 @@ def get_image_url(filename):
     """
     # filenameが絶対パスの場合はファイル名だけを抽出
     filename = os.path.basename(filename)
-    return url_for('static', filename=f'uploads/{filename}')
+    return url_for('uploaded_file', filename=filename)
 
 def get_image_mime_type(image_path):
     """

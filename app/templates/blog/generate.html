@@ -20,9 +20,9 @@
             </div>
             <div class="card-body">
                 <div class="preview-grid">
-                    {% for image in images %}
+                    {% for image_url in image_urls %}
                     <div class="preview-item">
-                        <img src="{{ url_for('static', filename='uploads/' + image) }}" alt="アップロードされた画像" class="img-fluid">
+                        <img src="{{ image_url }}" alt="アップロードされた画像" class="img-fluid">
                     </div>
                     {% endfor %}
                 </div>
@@ -30,11 +30,42 @@
                 {% if not generated_content %}
                 <div class="mt-3">
                     <form method="post" action="{{ url_for('blog.generate_content') }}">
-                        <input type="hidden" name="images" value="{{ images|join(',') }}">
                         <button type="submit" class="btn btn-primary w-100">
                             <i class="bi bi-magic"></i> ブログ内容を生成
                         </button>
                     </form>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- サロン情報取得フォーム -->
+        <div class="card mb-4">
+            <div class="card-header bg-info text-white">
+                <h3 class="h5 mb-0">サロン情報</h3>
+            </div>
+            <div class="card-body">
+                <form method="post" action="{{ url_for('blog.fetch_salon_info') }}">
+                    <div class="mb-3">
+                        <label for="salon-url" class="form-label">サロンURL</label>
+                        <input type="text" class="form-control" id="salon-url" name="salon_url" 
+                               value="{{ salon_url }}" placeholder="https://beauty.hotpepper.jp/slnH000xxxxx/" required>
+                        <div class="form-text">HPBサロントップページのURLを入力</div>
+                    </div>
+                    <button type="submit" class="btn btn-info w-100">
+                        <i class="bi bi-cloud-download"></i> サロン情報を取得
+                    </button>
+                </form>
+                
+                {% if stylists or coupons %}
+                <div class="mt-3">
+                    <p class="text-success">
+                        <i class="bi bi-check-circle"></i> サロン情報取得済み
+                    </p>
+                    <p class="small">
+                        スタイリスト: {{ stylists|length }}人<br>
+                        クーポン: {{ coupons|length }}件
+                    </p>
                 </div>
                 {% endif %}
             </div>
@@ -61,13 +92,11 @@
                         <div class="form-text">1000文字以内</div>
                     </div>
                     
-                    <input type="hidden" name="images" value="{{ images|join(',') }}">
-                    
                     <div class="d-flex justify-content-between">
                         <button type="submit" class="btn btn-primary">
                             <i class="bi bi-check2"></i> 内容を確定
                         </button>
-                        <a href="{{ url_for('blog.generate_content') }}?regenerate=true&images={{ images|join(',') }}" class="btn btn-outline-secondary">
+                        <a href="{{ url_for('blog.generate_content') }}?regenerate=true" class="btn btn-outline-secondary">
                             <i class="bi bi-arrow-clockwise"></i> 再生成
                         </a>
                     </div>
@@ -81,6 +110,100 @@
                 {% endif %}
             </div>
         </div>
+        
+        {% if generated_content %}
+        <!-- スタイリスト・クーポン選択 -->
+        <div class="card mb-4">
+            <div class="card-header bg-success text-white">
+                <h3 class="h5 mb-0">スタイリスト・クーポン選択</h3>
+            </div>
+            <div class="card-body">
+                {% if not stylists and not coupons %}
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle"></i> サロン情報を先に取得してください
+                </div>
+                {% else %}
+                <form method="post" action="{{ url_for('blog.prepare_post') }}" id="post-form">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="stylist-select" class="form-label">投稿者（スタイリスト）</label>
+                            <select class="form-select" id="stylist-select" name="stylist_id" required>
+                                <option value="" disabled {% if not stylists %}selected{% endif %}>選択してください</option>
+                                {% for stylist in stylists %}
+                                <option value="{{ stylist.id }}">{{ stylist.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">クーポン選択（複数可）</label>
+                            <div style="max-height: 150px; overflow-y: auto;">
+                                {% for coupon in coupons %}
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="coupons" value="{{ coupon.name }}" id="coupon-{{ loop.index }}">
+                                    <label class="form-check-label" for="coupon-{{ loop.index }}">
+                                        {{ coupon.name }}
+                                    </label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- テンプレート入力 -->
+        <div class="card mb-4">
+            <div class="card-header bg-warning text-dark">
+                <h3 class="h5 mb-0">テンプレート（署名・定型文）</h3>
+            </div>
+            <div class="card-body">
+                {% if not stylists and not coupons %}
+                <div class="text-center py-3">
+                    <p class="text-muted">
+                        サロン情報を取得すると、テンプレート入力が可能になります。
+                    </p>
+                </div>
+                {% else %}
+                <form method="post" action="{{ url_for('blog.save_template') }}">
+                    <div class="mb-3">
+                        <label for="template-content" class="form-label">ブログ末尾に追加するテンプレート</label>
+                        <textarea class="form-control" id="template-content" name="template" rows="5"
+                                placeholder="例：お問い合わせはこちら：03-xxxx-xxxx&#10;担当：○○&#10;営業時間：10:00-19:00">{{ selected_template }}</textarea>
+                        <div class="form-text">署名、定型文、連絡先などを入力してください</div>
+                    </div>
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-warning">
+                            <i class="bi bi-save"></i> テンプレートを保存
+                        </button>
+                    </div>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- サロンボード投稿準備 -->
+        <div class="card mb-4">
+            <div class="card-header bg-danger text-white">
+                <h3 class="h5 mb-0">サロンボード投稿準備</h3>
+            </div>
+            <div class="card-body">
+                {% if not stylists and not coupons %}
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle"></i> サロン情報を先に取得してください
+                </div>
+                {% else %}
+                <div class="d-grid">
+                    <button type="submit" form="post-form" class="btn btn-danger">
+                        <i class="bi bi-send"></i> 投稿準備へ進む
+                    </button>
+                </div>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %} 

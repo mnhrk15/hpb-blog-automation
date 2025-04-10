@@ -1,5 +1,5 @@
 import os
-from flask import render_template, redirect, url_for, request, flash, current_app, session
+from flask import render_template, redirect, url_for, request, flash, current_app, session, jsonify
 from app.blog import bp
 from app.auth.routes import login_required
 from app.utils.upload import save_uploaded_file
@@ -7,11 +7,17 @@ from app.gemini.generator import BlogGenerator
 from werkzeug.utils import secure_filename
 from app.utils.image import get_image_url
 from app.gemini.extractor import HairStyleExtractor
+from app.scraper.stylist import StylistScraper
+from app.scraper.coupon import CouponScraper
 
 # 画像ファイルの一時保存用セッションキー
 UPLOADED_IMAGES_KEY = 'blog_uploaded_images'
 GENERATED_CONTENT_KEY = 'blog_generated_content'
 HAIR_INFO_KEY = 'hair_style_info'
+SALON_URL_KEY = 'salon_url'
+STYLISTS_KEY = 'stylists'
+COUPONS_KEY = 'coupons'
+SELECTED_TEMPLATE_KEY = 'selected_template'
 
 @bp.route('/')
 @login_required
@@ -87,11 +93,23 @@ def generate():
     # ヘアスタイル情報を取得
     hair_info = session.get(HAIR_INFO_KEY, {})
     
+    # サロンURL、スタイリスト情報、クーポン情報を取得
+    salon_url = session.get(SALON_URL_KEY, '')
+    stylists = session.get(STYLISTS_KEY, [])
+    coupons = session.get(COUPONS_KEY, [])
+    
+    # テンプレート情報を取得
+    selected_template = session.get(SELECTED_TEMPLATE_KEY, '')
+    
     return render_template(
         'blog/generate.html', 
         image_urls=image_urls,
         generated_content=generated_content,
-        hair_info=hair_info
+        hair_info=hair_info,
+        salon_url=salon_url,
+        stylists=stylists,
+        coupons=coupons,
+        selected_template=selected_template
     )
 
 @bp.route('/generate-content', methods=['POST', 'GET'])
@@ -172,4 +190,80 @@ def hair_info():
         'blog/hair_info.html',
         hair_info=hair_info,
         image_url=image_url
-    ) 
+    )
+
+@bp.route('/fetch-salon-info', methods=['POST'])
+@login_required
+def fetch_salon_info():
+    # サロンURLの取得
+    salon_url = request.form.get('salon_url', '').strip()
+    
+    if not salon_url:
+        flash('サロンURLを入力してください', 'error')
+        return redirect(url_for('blog.generate'))
+    
+    # URLの基本的な検証
+    if not salon_url.startswith('https://beauty.hotpepper.jp/'):
+        flash('有効なHotPepper Beauty URLを入力してください', 'error')
+        return redirect(url_for('blog.generate'))
+    
+    try:
+        # スタイリスト情報の取得
+        stylist_scraper = StylistScraper(salon_url)
+        stylists = stylist_scraper.get_stylists()
+        
+        # クーポン情報の取得
+        coupon_scraper = CouponScraper(salon_url)
+        coupons = coupon_scraper.get_coupons()
+        
+        # セッションに保存
+        session[SALON_URL_KEY] = salon_url
+        session[STYLISTS_KEY] = stylists
+        session[COUPONS_KEY] = coupons
+        
+        flash(f'サロン情報を取得しました。スタイリスト: {len(stylists)}人、クーポン: {len(coupons)}件', 'success')
+    except Exception as e:
+        current_app.logger.error(f"サロン情報取得エラー: {str(e)}")
+        flash(f'サロン情報の取得に失敗しました: {str(e)}', 'error')
+    
+    return redirect(url_for('blog.generate'))
+
+@bp.route('/save-template', methods=['POST'])
+@login_required
+def save_template():
+    template_content = request.form.get('template', '').strip()
+    session[SELECTED_TEMPLATE_KEY] = template_content
+    flash('テンプレートを保存しました', 'success')
+    return redirect(url_for('blog.generate'))
+
+@bp.route('/prepare-post', methods=['POST'])
+@login_required
+def prepare_post():
+    # 必要な情報がすべて揃っているか確認
+    if not session.get(GENERATED_CONTENT_KEY):
+        flash('ブログ内容を生成してください', 'error')
+        return redirect(url_for('blog.generate'))
+    
+    if not session.get(UPLOADED_IMAGES_KEY):
+        flash('画像をアップロードしてください', 'error')
+        return redirect(url_for('blog.generate'))
+    
+    # 入力内容を取得
+    title = request.form.get('title', '').strip()
+    content = request.form.get('content', '').strip()
+    stylist_id = request.form.get('stylist_id', '').strip()
+    selected_coupons = request.form.getlist('coupons')
+    template = request.form.get('template', '').strip()
+    
+    # 入力内容の検証
+    if not title:
+        flash('タイトルは必須です', 'error')
+        return redirect(url_for('blog.generate'))
+    
+    if not content:
+        flash('本文は必須です', 'error')
+        return redirect(url_for('blog.generate'))
+    
+    # 投稿準備画面に遷移（ここではまだ実装せず、将来の拡張用に置いておく）
+    flash('投稿準備が完了しました。サロンボードへのログイン情報を入力してください。', 'success')
+    return redirect(url_for('blog.generate')) 
