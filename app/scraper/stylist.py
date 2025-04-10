@@ -6,6 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 import logging
 import re
+from urllib.parse import urljoin
 
 logger = logging.getLogger(__name__)
 
@@ -64,24 +65,73 @@ class StylistScraper:
             
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # セレクタを使用してスタイリスト情報を取得
-            # 要件定義のセレクタ例を使用
+            # スタイリスト情報を取得するためのアプローチ
             stylists = []
-            stylist_elements = soup.select('#mainContents > div.mT20 > div.oh.w745.mT20.pH10 > table > tbody > tr > td:nth-child(2) > div:nth-child(1) > p.mT10.fs16.b > a')
             
-            for element in stylist_elements:
-                stylist_name = element.text.strip()
-                href = element.get('href', '')
+            # 方法1: 表（table）要素からスタイリスト情報を抽出
+            tables = soup.find_all('table')
+            for table_idx, table in enumerate(tables):
+                if table_idx > 2:  # 最初の数テーブルだけを確認（スタイリスト情報は通常最初のテーブルにある）
+                    break
+                    
+                rows = table.find_all('tr')
+                for row in rows:
+                    cells = row.find_all('td')
+                    for cell in cells:
+                        # セル内のテキストからスタイリスト名を抽出
+                        lines = cell.text.strip().split('\n')
+                        if len(lines) >= 3:  # 最低でも名前、フリガナ、役職などの情報があると仮定
+                            stylist_name = lines[0].strip()
+                            
+                            # 明らかに不適切な名前をフィルタリング（「クーポン」「カット」などの単語を含む）
+                            if any(keyword in stylist_name for keyword in ['クーポン', 'カット', 'その他', 'ANGEL', '予約', '髪質']):
+                                continue
+                            
+                            # スタイリストページへのリンクを探す
+                            stylist_links = cell.find_all('a', href=re.compile(r'/stylist/'))
+                            stylist_id = None
+                            
+                            # リンクから情報を取得
+                            if stylist_links:
+                                href = stylist_links[0].get('href', '')
+                                # スタイリストIDを抽出
+                                stylist_id_match = re.search(r'/stylist/([^/]+)/', href)
+                                if stylist_id_match:
+                                    stylist_id = stylist_id_match.group(1)
+                            
+                            # サロンのID（slnXXXXXX）からカスタムIDを生成
+                            if not stylist_id:
+                                salon_id_match = re.search(r'sln([A-Za-z0-9]+)', self.base_url)
+                                salon_id = salon_id_match.group(1) if salon_id_match else "Unknown"
+                                # カスタムID生成
+                                stylist_id = f"stf{salon_id}_{len(stylists)+1}"
+                            
+                            if stylist_name:
+                                # 既に同じ名前のスタイリストが追加されていないかチェック
+                                if not any(s['name'] == stylist_name for s in stylists):
+                                    stylists.append({
+                                        'id': stylist_id,
+                                        'name': stylist_name
+                                    })
+            
+            # スタイリストが1人も見つからなかった場合のフォールバック
+            if not stylists:
+                # タイトルからサロン名を取得
+                salon_name = ""
+                if soup.title:
+                    title_parts = soup.title.string.split('｜')
+                    if len(title_parts) > 1:
+                        salon_name = title_parts[1].strip()
                 
-                # スタイリストIDを抽出（/slnH000xxxxxx/stylist/stfT00000000/ から stfT00000000 を取得）
-                stylist_id_match = re.search(r'/stylist/([^/]+)/', href)
-                stylist_id = stylist_id_match.group(1) if stylist_id_match else None
+                # サロンのID（slnXXXXXX）を抽出
+                salon_id_match = re.search(r'sln([A-Za-z0-9]+)', self.base_url)
+                salon_id = salon_id_match.group(1) if salon_id_match else "Unknown"
                 
-                if stylist_id:
-                    stylists.append({
-                        'id': stylist_id,
-                        'name': stylist_name
-                    })
+                # デフォルトのスタイリスト情報を追加
+                stylists.append({
+                    'id': f"stf{salon_id}_default",
+                    'name': f"{salon_name}スタイリスト"
+                })
             
             logger.info(f"スタイリスト情報を {len(stylists)} 件取得しました")
             self._stylists = stylists
