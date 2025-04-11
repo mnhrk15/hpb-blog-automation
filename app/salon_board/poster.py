@@ -104,6 +104,52 @@ class SalonBoardPoster:
             bool: ログイン成功でTrue、失敗でFalse
         """
         try:
+            # ログインページに移動する前に、ページに到着したら実行するJavaScriptを準備
+            # これにより、ウィジェットが表示される前に非表示にする処理を仕込む
+            self.page.add_init_script("""
+                // MutationObserverを使用してDOM変更を監視し、ウィジェットを即座に非表示にする
+                (function() {
+                    function hideKarteWidgets() {
+                        // karteウィジェットの候補となるセレクタ
+                        const selectors = [
+                            '.karte-widget__container',
+                            '[class*="_reception-Skin"]',
+                            '[class*="_reception-MinimumWidget"]',
+                            '[id^="karte-"]'
+                        ];
+                        
+                        for (const selector of selectors) {
+                            const elements = document.querySelectorAll(selector);
+                            for (const el of elements) {
+                                console.log('Hiding karte widget:', el);
+                                el.style.display = 'none';
+                                el.style.visibility = 'hidden';
+                                el.style.opacity = '0';
+                            }
+                        }
+                    }
+                    
+                    // 初期実行
+                    setTimeout(hideKarteWidgets, 500);
+                    
+                    // DOM変更を監視して実行
+                    const observer = new MutationObserver((mutations) => {
+                        hideKarteWidgets();
+                    });
+                    
+                    // ページ読み込み完了後にオブザーバーを設定
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', () => {
+                            observer.observe(document.body, { childList: true, subtree: true });
+                            hideKarteWidgets();
+                        });
+                    } else {
+                        observer.observe(document.body, { childList: true, subtree: true });
+                        hideKarteWidgets();
+                    }
+                })();
+            """)
+            
             # ログインページに移動
             logger.info(f"ログインページ({self.login_url})に移動します")
             self.page.goto(self.login_url, wait_until="networkidle")
@@ -112,76 +158,152 @@ class SalonBoardPoster:
             # 少し待機してページが完全に読み込まれるのを待つ
             time.sleep(2)
             
-            # ヘルプポップアップがあれば閉じる
+            # ウィジェットを強制的に非表示にする（追加分）
             try:
-                help_widget_selectors = [
-                    "._reception-CloseButton__8yBH_",
-                    "#karte-5653821 > div.karte-widget__container > div > div > div > div div._reception-CloseButton__8yBH_",
-                    "//div[contains(@class, '_reception-CloseButton__8yBH_')]"
-                ]
-                
-                for selector in help_widget_selectors:
-                    if self.page.is_visible(selector, timeout=2000):
-                        logger.info(f"ヘルプポップアップを検出しました。閉じます。")
-                        self.page.click(selector)
-                        time.sleep(1)  # ポップアップが閉じるのを待つ
-                        break
+                self.page.evaluate("""
+                    const selectors = [
+                        '.karte-widget__container',
+                        '[class*="_reception-Skin"]',
+                        '[class*="_reception-MinimumWidget"]',
+                        '[id^="karte-"]'
+                    ];
+                    
+                    for (const selector of selectors) {
+                        const elements = document.querySelectorAll(selector);
+                        for (const el of elements) {
+                            console.log('Force hiding widget:', el);
+                            el.style.display = 'none';
+                            el.style.visibility = 'hidden';
+                            el.style.opacity = '0';
+                        }
+                    }
+                """)
+                logger.info("ウィジェットの強制非表示を実行しました")
             except Exception as e:
-                logger.warning(f"ヘルプポップアップの処理中にエラー: {e}")
-                # 非クリティカルなので続行
+                logger.warning(f"ウィジェットの強制非表示中にエラー: {e}")
             
             # ロボット認証が検出されたら中断
             if self.is_robot_detection_present():
                 logger.error("ログイン時にロボット認証が検出されました。処理を中断します。")
                 return False
-                
+            
             # フォームの存在のみチェック（visible状態は要求しない）
             logger.info("入力フィールドを検索します")
             
-            # ユーザーID入力 - JavaScriptによる直接操作
-            logger.info(f"ユーザーID '{user_id}' を入力します")
-            id_input_success = self._set_input_value_by_js("input[name='userId']", user_id)
+            # --- ここから完全にJavaScriptでログイン処理を実行 ---
+            js_login_script = f"""
+            (function() {{
+                try {{
+                    // ユーザーIDとパスワードをセット
+                    const userIdInput = document.querySelector("input[name='userId']");
+                    const pwInput = document.querySelector("#jsiPwInput") || document.querySelector("input[name='password']");
+                    
+                    if (!userIdInput || !pwInput) {{
+                        console.error('Login inputs not found');
+                        return false;
+                    }}
+                    
+                    // 値を設定
+                    userIdInput.value = "{user_id}";
+                    pwInput.value = "{password}";
+                    
+                    // イベントを発火
+                    userIdInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    pwInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    
+                    // 強制的にフォーム送信（複数の方法を試す）
+                    const loginForm = document.querySelector("#idPasswordInputForm");
+                    const loginButton = document.querySelector("#idPasswordInputForm > div > div > a") || 
+                                      document.querySelector("a.common-CNCcommon__primaryBtn.loginBtnSize");
+                    
+                    if (loginButton) {{
+                        // 1. まずボタンクリックを試みる
+                        console.log('Clicking login button via JS');
+                        loginButton.click();
+                        
+                        // 念のため少し待って再度クリック
+                        setTimeout(() => {{
+                            try {{
+                                loginButton.click();
+                            }} catch (e) {{}}
+                        }}, 500);
+                    }}
+                    
+                    if (loginForm) {{
+                        // 2. フォーム送信も試みる
+                        setTimeout(() => {{
+                            try {{
+                                console.log('Submitting form via JS');
+                                loginForm.submit();
+                            }} catch (e) {{}}
+                        }}, 1000);
+                    }}
+                    
+                    return true;
+                }} catch (e) {{
+                    console.error('JS login error:', e);
+                    return false;
+                }}
+            }})()
+            """
             
-            if not id_input_success:
-                logger.error("ユーザーID入力に失敗しました")
-                self.page.screenshot(path="id_input_error.png")
-                return False
+            # JavaScriptによるログイン実行
+            logger.info("JavaScriptを使用してログイン処理を実行します")
+            login_result = self.page.evaluate(js_login_script)
             
-            # パスワード入力 - JavaScriptによる直接操作
-            logger.info("パスワードを入力します")
-            password_input_success = self._set_input_value_by_js("#jsiPwInput", password)
-            
-            if not password_input_success:
-                # 代替セレクタを試す
-                logger.info("代替セレクタでパスワード入力を試みます")
-                password_input_success = self._set_input_value_by_js("input[name='password']", password)
+            if not login_result:
+                logger.error("JavaScriptによるログイン処理に失敗しました")
+                self.page.screenshot(path="js_login_error.png")
                 
-            if not password_input_success:
-                logger.error("パスワード入力に失敗しました")
-                self.page.screenshot(path="password_input_error.png")
-                return False
-            
-            # 入力値を確認
-            time.sleep(1)  # 入力完了を待つ
-            logger.info("ログインボタンをクリックします")
-            
-            # ログインボタンクリック
-            login_click_success = self._click_element_by_js("#idPasswordInputForm > div > div > a")
-            
-            if not login_click_success:
-                # 代替セレクタを試す
-                logger.info("代替セレクタでログインボタンクリックを試みます")
-                login_click_success = self._click_element_by_js("a.common-CNCcommon__primaryBtn.loginBtnSize")
+                # 通常の方法も試してみる（バックアップとして既存のコードを残す）
+                logger.info("通常の方法でログインを試みます")
                 
-            if not login_click_success:
-                # フォーム送信を試す
-                logger.info("フォーム送信を試みます")
-                form_submit_success = self._submit_form_by_js("#idPasswordInputForm")
+                # ユーザーID入力 - JavaScriptによる直接操作
+                logger.info(f"ユーザーID '{user_id}' を入力します")
+                id_input_success = self._set_input_value_by_js("input[name='userId']", user_id)
                 
-                if not form_submit_success:
-                    logger.error("ログインボタンのクリックに失敗しました")
-                    self.page.screenshot(path="login_button_error.png")
+                if not id_input_success:
+                    logger.error("ユーザーID入力に失敗しました")
+                    self.page.screenshot(path="id_input_error.png")
                     return False
+                
+                # パスワード入力 - JavaScriptによる直接操作
+                logger.info("パスワードを入力します")
+                password_input_success = self._set_input_value_by_js("#jsiPwInput", password)
+                
+                if not password_input_success:
+                    # 代替セレクタを試す
+                    logger.info("代替セレクタでパスワード入力を試みます")
+                    password_input_success = self._set_input_value_by_js("input[name='password']", password)
+                    
+                if not password_input_success:
+                    logger.error("パスワード入力に失敗しました")
+                    self.page.screenshot(path="password_input_error.png")
+                    return False
+                
+                # 入力値を確認
+                time.sleep(1)  # 入力完了を待つ
+                logger.info("ログインボタンをクリックします")
+                
+                # ログインボタンクリック
+                login_click_success = self._click_element_by_js("#idPasswordInputForm > div > div > a")
+                
+                if not login_click_success:
+                    # 代替セレクタを試す
+                    logger.info("代替セレクタでログインボタンクリックを試みます")
+                    login_click_success = self._click_element_by_js("a.common-CNCcommon__primaryBtn.loginBtnSize")
+                    
+                if not login_click_success:
+                    # フォーム送信を試す
+                    logger.info("フォーム送信を試みます")
+                    form_submit_success = self._submit_form_by_js("#idPasswordInputForm")
+                    
+                    if not form_submit_success:
+                        logger.error("ログインボタンのクリックに失敗しました")
+                        self.page.screenshot(path="login_button_error.png")
+                        return False
+            else:
+                logger.info("JavaScriptによるログイン処理が成功しました")
             
             # ダッシュボードが表示されるまで待機
             logger.info("ダッシュボードの表示を待機します...")
