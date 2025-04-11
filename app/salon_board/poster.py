@@ -160,25 +160,51 @@ class SalonBoardPoster:
             
             # ウィジェットを強制的に非表示にする（追加分）
             try:
-                self.page.evaluate("""
-                    const selectors = [
-                        '.karte-widget__container',
-                        '[class*="_reception-Skin"]',
-                        '[class*="_reception-MinimumWidget"]',
-                        '[id^="karte-"]'
-                    ];
-                    
-                    for (const selector of selectors) {
-                        const elements = document.querySelectorAll(selector);
-                        for (const el of elements) {
-                            console.log('Force hiding widget:', el);
-                            el.style.display = 'none';
-                            el.style.visibility = 'hidden';
-                            el.style.opacity = '0';
+                # 変更: 要素の存在をチェックするシンプルな方法に変更
+                widget_exists = False
+                widget_selectors = [
+                    '.karte-widget__container',
+                    '[class*="_reception-Skin"]',
+                    '[class*="_reception-MinimumWidget"]',
+                    '[id^="karte-"]'
+                ]
+                
+                for selector in widget_selectors:
+                    try:
+                        # タイムアウトを短く設定して存在チェック（100ms）
+                        # ノンブロッキングでチェックするため待ち時間を最小化
+                        element = self.page.query_selector(selector)
+                        if element:
+                            widget_exists = True
+                            logger.info(f"ウィジェット '{selector}' を検出しました")
+                            break
+                    except Exception as selector_err:
+                        logger.debug(f"セレクタ '{selector}' のチェック中にエラー: {selector_err}")
+                        continue
+                
+                if widget_exists:
+                    logger.info("ウィジェットが検出されました。非表示にします。")
+                    self.page.evaluate("""
+                        const selectors = [
+                            '.karte-widget__container',
+                            '[class*="_reception-Skin"]',
+                            '[class*="_reception-MinimumWidget"]',
+                            '[id^="karte-"]'
+                        ];
+                        
+                        for (const selector of selectors) {
+                            const elements = document.querySelectorAll(selector);
+                            for (const el of elements) {
+                                console.log('Force hiding widget:', el);
+                                el.style.display = 'none';
+                                el.style.visibility = 'hidden';
+                                el.style.opacity = '0';
+                            }
                         }
-                    }
-                """)
-                logger.info("ウィジェットの強制非表示を実行しました")
+                    """)
+                    logger.info("ウィジェットの強制非表示を実行しました")
+                else:
+                    logger.info("ウィジェットは検出されませんでした。非表示処理はスキップします。")
             except Exception as e:
                 logger.warning(f"ウィジェットの強制非表示中にエラー: {e}")
             
