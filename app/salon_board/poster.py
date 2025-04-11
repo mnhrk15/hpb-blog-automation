@@ -112,43 +112,90 @@ class SalonBoardPoster:
             # 少し待機してページが完全に読み込まれるのを待つ
             time.sleep(2)
             
+            # ヘルプポップアップがあれば閉じる
+            try:
+                help_widget_selectors = [
+                    "._reception-CloseButton__8yBH_",
+                    "#karte-5653821 > div.karte-widget__container > div > div > div > div div._reception-CloseButton__8yBH_",
+                    "//div[contains(@class, '_reception-CloseButton__8yBH_')]"
+                ]
+                
+                for selector in help_widget_selectors:
+                    if self.page.is_visible(selector, timeout=2000):
+                        logger.info(f"ヘルプポップアップを検出しました。閉じます。")
+                        self.page.click(selector)
+                        time.sleep(1)  # ポップアップが閉じるのを待つ
+                        break
+            except Exception as e:
+                logger.warning(f"ヘルプポップアップの処理中にエラー: {e}")
+                # 非クリティカルなので続行
+            
             # ロボット認証が検出されたら中断
             if self.is_robot_detection_present():
                 logger.error("ログイン時にロボット認証が検出されました。処理を中断します。")
                 return False
+                
+            # フォームの存在のみチェック（visible状態は要求しない）
+            logger.info("入力フィールドを検索します")
             
-            # ユーザーID入力
+            # ユーザーID入力 - JavaScriptによる直接操作
             logger.info(f"ユーザーID '{user_id}' を入力します")
-            self.page.fill("input[name='userId']", user_id)
+            id_input_success = self._set_input_value_by_js("input[name='userId']", user_id)
             
-            # パスワード入力
+            if not id_input_success:
+                logger.error("ユーザーID入力に失敗しました")
+                self.page.screenshot(path="id_input_error.png")
+                return False
+            
+            # パスワード入力 - JavaScriptによる直接操作
             logger.info("パスワードを入力します")
-            self.page.fill("input#jsiPwInput", password)
+            password_input_success = self._set_input_value_by_js("#jsiPwInput", password)
+            
+            if not password_input_success:
+                # 代替セレクタを試す
+                logger.info("代替セレクタでパスワード入力を試みます")
+                password_input_success = self._set_input_value_by_js("input[name='password']", password)
+                
+            if not password_input_success:
+                logger.error("パスワード入力に失敗しました")
+                self.page.screenshot(path="password_input_error.png")
+                return False
+            
+            # 入力値を確認
+            time.sleep(1)  # 入力完了を待つ
+            logger.info("ログインボタンをクリックします")
             
             # ログインボタンクリック
-            logger.info("ログインボタンをクリックします")
-            self.page.click("a.common-CNCcommon__primaryBtn.loginBtnSize")
+            login_click_success = self._click_element_by_js("#idPasswordInputForm > div > div > a")
+            
+            if not login_click_success:
+                # 代替セレクタを試す
+                logger.info("代替セレクタでログインボタンクリックを試みます")
+                login_click_success = self._click_element_by_js("a.common-CNCcommon__primaryBtn.loginBtnSize")
+                
+            if not login_click_success:
+                # フォーム送信を試す
+                logger.info("フォーム送信を試みます")
+                form_submit_success = self._submit_form_by_js("#idPasswordInputForm")
+                
+                if not form_submit_success:
+                    logger.error("ログインボタンのクリックに失敗しました")
+                    self.page.screenshot(path="login_button_error.png")
+                    return False
             
             # ダッシュボードが表示されるまで待機
             logger.info("ダッシュボードの表示を待機します...")
             try:
-                # より長いタイムアウト時間を設定し、ネットワークのアイドル状態を待つ
                 self.page.wait_for_selector("#globalNavi", timeout=self.default_timeout, state="visible")
                 logger.info("ダッシュボードの表示を確認しました")
             except TimeoutError as e:
-                # タイムアウトした場合、現在のURLとタイトルを記録しておく
+                # タイムアウトした場合、現在のURLとタイトルを記録
                 current_url = self.page.url
                 current_title = self.page.title()
                 logger.error(f"ログイン後のダッシュボード表示がタイムアウトしました。現在のURL: {current_url}, タイトル: {current_title}")
                 
-                # スクリーンショットを撮影して保存
-                try:
-                    screenshot_path = "login_timeout_screenshot.png"
-                    self.page.screenshot(path=screenshot_path)
-                    logger.info(f"スクリーンショットを保存しました: {screenshot_path}")
-                except Exception as ss_err:
-                    logger.error(f"スクリーンショット撮影に失敗しました: {ss_err}")
-                
+                # スクリーンショット撮影
+                self.page.screenshot(path="login_timeout_screenshot.png")
                 return False
                 
             # ログイン後にロボット認証が検出されたら中断
@@ -161,13 +208,103 @@ class SalonBoardPoster:
             
         except Exception as e:
             logger.error(f"ログイン処理中にエラーが発生しました: {e}")
-            # スクリーンショットを撮影して保存
+            # スクリーンショット撮影
+            self.page.screenshot(path="login_error_screenshot.png")
+            return False
+            
+    def _set_input_value_by_js(self, selector, value):
+        """JavaScriptを使用して入力フィールドに値を設定する内部メソッド"""
+        try:
+            # セレクタが存在するか確認
+            if not self.page.query_selector(selector):
+                logger.warning(f"セレクタ '{selector}' が見つかりません")
+                return False
+                
+            # JavaScriptを使用して値を設定
+            js_script = f"""
+            (function() {{
+                var el = document.querySelector("{selector.replace('"', '\\"')}");
+                if (el) {{
+                    el.value = "{value}";
+                    // イベントを発火させる
+                    var event = new Event('input', {{ bubbles: true }});
+                    el.dispatchEvent(event);
+                    return true;
+                }}
+                return false;
+            }})()
+            """
+            result = self.page.evaluate(js_script)
+            
+            if result:
+                logger.info(f"JavaScriptを使用して値を設定しました: {selector}")
+                return True
+                
+            return False
+        except Exception as e:
+            logger.warning(f"JavaScriptによる値設定中にエラー: {e}")
+            return False
+            
+    def _click_element_by_js(self, selector):
+        """JavaScriptを使用して要素をクリックする内部メソッド"""
+        try:
+            # セレクタが存在するか確認
+            if not self.page.query_selector(selector):
+                logger.warning(f"セレクタ '{selector}' が見つかりません")
+                return False
+                
+            # まず通常のクリックを試す
             try:
-                screenshot_path = "login_error_screenshot.png"
-                self.page.screenshot(path=screenshot_path)
-                logger.info(f"エラー時のスクリーンショットを保存しました: {screenshot_path}")
-            except Exception as ss_err:
-                logger.error(f"スクリーンショット撮影に失敗しました: {ss_err}")
+                self.page.click(selector)
+                logger.info(f"セレクタ '{selector}' を使用して要素をクリックしました")
+                return True
+            except Exception as click_err:
+                logger.warning(f"通常クリックに失敗: {click_err}")
+                
+                # JavaScriptを使用してクリック
+                js_script = f"""
+                (function() {{
+                    var el = document.querySelector("{selector.replace('"', '\\"')}");
+                    if (el) {{
+                        el.click();
+                        return true;
+                    }}
+                    return false;
+                }})()
+                """
+                result = self.page.evaluate(js_script)
+                
+                if result:
+                    logger.info(f"JavaScriptを使用して要素をクリックしました: {selector}")
+                    return True
+                    
+                return False
+        except Exception as e:
+            logger.warning(f"JavaScriptによるクリック中にエラー: {e}")
+            return False
+            
+    def _submit_form_by_js(self, form_selector):
+        """JavaScriptを使用してフォームを送信する内部メソッド"""
+        try:
+            js_script = f"""
+            (function() {{
+                var form = document.querySelector("{form_selector.replace('"', '\\"')}");
+                if (form) {{
+                    form.submit();
+                    return true;
+                }}
+                return false;
+            }})()
+            """
+            result = self.page.evaluate(js_script)
+            
+            if result:
+                logger.info(f"JavaScriptを使用してフォームを送信しました: {form_selector}")
+                return True
+                
+            return False
+        except Exception as e:
+            logger.warning(f"JavaScriptによるフォーム送信中にエラー: {e}")
             return False
 
     def navigate_to_blog_post_page(self):
@@ -246,9 +383,23 @@ class SalonBoardPoster:
             result = self.page.evaluate(js_script, content)
             
             if not result:
-                # 代替手段: 通常のテキストエリアとして操作を試みる
-                self.page.fill("textarea#blogContents", content)
+                # 代替手段: より直接的にiframeを操作
+                try:
+                    logger.info("代替方法でエディタに本文を設定します")
+                    # iframeがある場合はまずそれを取得
+                    iframe = self.page.frame_locator("iframe.nicEdit-main")
+                    if iframe:
+                        # iframeのbody要素に直接コンテンツを設定
+                        iframe.locator("body").fill(content)
+                    else:
+                        # 通常のテキストエリアとして操作を試みる
+                        self.page.fill("textarea#blogContents", content)
+                except Exception as inner_e:
+                    logger.warning(f"代替方法での本文設定中にエラー: {inner_e}")
+                    # 最後の手段として通常のテキストエリアに設定
+                    self.page.fill("textarea#blogContents", content)
                 
+            logger.info("本文の設定が完了しました")
             return True
             
         except Exception as e:
@@ -267,36 +418,45 @@ class SalonBoardPoster:
         """
         try:
             # 「画像アップロード」ボタンをクリック
+            logger.info("画像アップロードボタンをクリックします")
             self.page.click("a#upload")
             
             # 画像アップロードモーダルの表示を待機
             try:
-                self.page.wait_for_selector("div.jscImageUploaderModal", timeout=10000)
+                logger.info("画像アップロードモーダルの表示を待機します")
+                self.page.wait_for_selector("div.imageUploaderModal", timeout=10000)
             except TimeoutError:
                 logger.error("画像アップロードモーダルの表示がタイムアウトしました")
                 return False
             
             # ファイルインプットに画像を設定
+            logger.info(f"画像ファイル {image_path} を選択します")
             self.page.set_input_files("input#sendFile", image_path)
             
-            # アップロード完了を待機（適切なセレクタに要調整）
+            # 画像が選択されたことを確認
             try:
-                self.page.wait_for_selector("div.upload-complete", timeout=20000)
+                logger.info("画像のサムネイルが表示されるのを待機します")
+                self.page.wait_for_selector("img.imageUploaderModalThumbnail", timeout=20000, state="visible")
+                # 登録するボタンが有効になるのを待つ
+                self.page.wait_for_selector("input.imageUploaderModalSubmitButton.isActive", timeout=10000)
             except TimeoutError:
-                logger.warning("アップロード完了の検出がタイムアウトしました。処理を継続します。")
+                logger.warning("画像サムネイルの表示確認がタイムアウトしました。処理を継続します。")
             
-            # アップロード後の「設定する」ボタンをクリック
+            # 登録するボタンをクリック
+            logger.info("「登録する」ボタンをクリックします")
             try:
-                if self.page.query_selector("button.insert-image"):
-                    self.page.click("button.insert-image")
-                elif self.page.query_selector("a.insert-button"):
-                    self.page.click("a.insert-button")
-                # その他のボタンパターンがあれば追加
-            except Exception as e:
-                logger.warning(f"画像挿入ボタンのクリックに失敗しました: {e}")
+                self.page.click("input.imageUploaderModalSubmitButton")
+            except Exception as button_err:
+                logger.warning(f"標準セレクタでの登録ボタンのクリックに失敗しました: {button_err}")
+                try:
+                    # XPathを使用した代替アプローチ
+                    self.page.click("//input[@value='登録する']")
+                except Exception as xpath_err:
+                    logger.warning(f"XPathでの登録ボタンのクリックにも失敗しました: {xpath_err}")
             
             # モーダルが閉じるのを待つ
-            time.sleep(2)
+            logger.info("モーダルが閉じるのを待機します")
+            time.sleep(3)
             
             return True
             
@@ -334,29 +494,67 @@ class SalonBoardPoster:
         """
         try:
             # クーポン選択ボタンをクリック
+            logger.info("クーポン選択ボタンをクリックします")
             self.page.click("a.jsc_SB_modal_trigger")
             
             # クーポン選択モーダルの表示を待機
             try:
+                logger.info("クーポン選択モーダルの表示を待機します")
                 self.page.wait_for_selector("div#couponWrap", timeout=10000)
+                if not self.page.is_visible("div#couponWrap"):
+                    # 代替セレクタで再試行
+                    logger.info("代替セレクタでクーポンモーダルの表示を確認します")
+                    self.page.wait_for_selector("#couponArea", timeout=5000)
             except TimeoutError:
                 logger.error("クーポン選択モーダルの表示がタイムアウトしました")
                 return False
             
             # 各クーポンを選択
             for coupon_name in coupon_names:
-                # クーポンに関連するチェックボックスを探す（テキスト内容で検索）
+                logger.info(f"クーポン '{coupon_name}' を選択します")
                 try:
-                    # XPathを使用して、テキストを含む要素を見つけ、その近くのチェックボックスを選択
-                    self.page.check(f"//label[contains(text(), '{coupon_name}')]/preceding-sibling::input[@type='checkbox']")
+                    # より柔軟な方法でクーポンを探してチェック
+                    # まず、クーポン名を含むテキスト要素を探す
+                    coupon_elements = self.page.query_selector_all("p.couponText")
+                    found = False
+                    
+                    for elem in coupon_elements:
+                        text = elem.inner_text()
+                        if coupon_name in text:
+                            # クーポン名が見つかったら、親要素を遡ってチェックボックスを見つける
+                            logger.info(f"クーポン '{coupon_name}' が見つかりました: {text}")
+                            # 関連するチェックボックスをクリック
+                            closest_label = elem.evaluate("node => node.closest('label')")
+                            if closest_label:
+                                closest_label.click()
+                                found = True
+                                logger.info(f"クーポン '{coupon_name}' を選択しました")
+                                break
+                    
+                    if not found:
+                        # 代替的な方法: XPathを使用してテキストを部分一致で検索
+                        logger.info(f"代替方法でクーポン '{coupon_name}' を検索します")
+                        self.page.click(f"//p[contains(text(), '{coupon_name}')]/ancestor::label")
+                        logger.info(f"代替方法でクーポン '{coupon_name}' を選択しました")
+                        
                 except Exception as e:
                     logger.warning(f"クーポン '{coupon_name}' の選択に失敗しました: {e}")
             
             # 「設定する」ボタンをクリック
-            self.page.click("a.jsc_SB_modal_setting_btn")
+            logger.info("「設定する」ボタンをクリックします")
+            try:
+                self.page.click("a.jsc_SB_modal_setting_btn")
+            except Exception as e:
+                logger.warning(f"標準セレクタでの設定ボタンのクリックに失敗しました: {e}")
+                try:
+                    # 代替セレクタで試行
+                    self.page.click("//a[contains(text(), '設定する')]")
+                except Exception as alt_e:
+                    logger.warning(f"代替方法での設定ボタンのクリックにも失敗しました: {alt_e}")
             
             # モーダルが閉じるのを待つ
-            time.sleep(2)
+            logger.info("モーダルが閉じるのを待機します")
+            time.sleep(3)
             
             return True
             
