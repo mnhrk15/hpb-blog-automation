@@ -22,7 +22,7 @@ class SalonBoardPoster:
         self.browser = None
         self.page = None
         self.login_url = "https://salonboard.com/login/"
-        self.default_timeout = 60000  # デフォルトのタイムアウトを60秒に設定
+        self.default_timeout = 120000  # デフォルトのタイムアウトを120秒に設定
 
     def start(self):
         """Playwrightとブラウザを起動"""
@@ -506,52 +506,70 @@ class SalonBoardPoster:
         nicEditリッチテキストエディタにコンテンツを設定する
         
         Args:
-            content (str): 設定するHTML内容
+            content (str): 設定するHTML内容（またはプレーンテキスト）
             
         Returns:
             bool: 成功でTrue、失敗でFalse
         """
         try:
+            # content 文字列を適切にエスケープしてJSリテラルにする
+            # テンプレートリテラル内で安全に使えるようにエスケープ
+            escaped_content = content.replace('\\\\', '\\\\\\\\').replace('`', '\\`').replace('$', '\\$')
+            
             # JavaScriptを使用してnicEditエディタの内容を設定
-            js_script = """
-            (function() {
-                try {
+            # 変更: evaluateの第2引数を使わず、直接JSコードに埋め込む
+            js_script = f"""
+            (function() {{
+                try {{
                     var editorInstance = nicEditors.findEditor('blogContents');
-                    if (editorInstance) {
-                        editorInstance.setContent(arguments[0]);
+                    if (editorInstance) {{
+                        // 確実に文字列として渡す
+                        editorInstance.setContent(`{escaped_content}`); 
                         return true;
-                    }
-                    return false;
-                } catch(e) {
+                    }} else {{
+                        console.error('nicEdit editor instance not found for blogContents');
+                        return false;
+                    }}
+                }} catch(e) {{
                     console.error('nicEdit操作エラー:', e);
                     return false;
-                }
-            })()
+                }}
+            }})()
             """
-            result = self.page.evaluate(js_script, content)
+            logger.debug(f"Executing nicEdit script with content: {escaped_content[:100]}...") # デバッグ用に最初の100文字だけログ出力
+            result = self.page.evaluate(js_script) # evaluateの第2引数は削除
             
-            if not result:
+            if result:
+                logger.info("JavaScriptを使用してnicEditに内容を設定しました")
+                return True
+            else:
+                logger.warning("JavaScriptを使用したnicEditへの内容設定に失敗しました。代替手段を試みます。")
                 # 代替手段: より直接的にiframeを操作
                 try:
                     logger.info("代替方法でエディタに本文を設定します")
-                    # iframeがある場合はまずそれを取得
-                    iframe = self.page.frame_locator("iframe.nicEdit-main")
-                    if iframe:
-                        # iframeのbody要素に直接コンテンツを設定
-                        iframe.locator("body").fill(content)
+                    # nicEditが生成するiframeのセレクタを確認 (実際のサイトで確認が必要な場合あり)
+                    iframe_selector = "iframe[id^='nicEdit']" # 一般的なnicEditのiframeセレクタ
+                    iframe = self.page.frame_locator(iframe_selector) 
+                    
+                    if iframe.count() > 0: # iframeが存在するか確認
+                        # iframe内のbody要素に直接コンテンツを設定 (fillはテキスト入力向き)
+                        iframe.locator("body").fill(content) 
+                        # 必要であればHTMLとして設定:
+                        # iframe.locator("body").evaluate(f'element => element.innerHTML = `{escaped_content}`')
+                        logger.info("iframe内のbodyに内容を設定しました")
                     else:
+                        logger.warning(f"nicEditのiframe ({iframe_selector}) が見つかりません。通常のテキストエリアとして操作を試みます。")
                         # 通常のテキストエリアとして操作を試みる
                         self.page.fill("textarea#blogContents", content)
+                        logger.info("textarea#blogContentsに内容を設定しました")
+                    return True # 代替手段が成功したとみなす (エラーが出なければ)
+
                 except Exception as inner_e:
-                    logger.warning(f"代替方法での本文設定中にエラー: {inner_e}")
-                    # 最後の手段として通常のテキストエリアに設定
-                    self.page.fill("textarea#blogContents", content)
+                    logger.error(f"代替方法での本文設定中にエラー: {inner_e}", exc_info=True)
+                    return False # 代替手段も失敗
                 
-            logger.info("本文の設定が完了しました")
-            return True
-            
         except Exception as e:
-            logger.error(f"リッチテキストエディタの操作中にエラーが発生しました: {e}")
+            logger.error(f"リッチテキストエディタの操作中にエラーが発生しました: {e}", exc_info=True)
             return False
 
     def upload_image(self, image_path):
