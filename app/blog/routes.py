@@ -22,7 +22,7 @@ SELECTED_TEMPLATE_KEY = 'selected_template'
 SALON_BOARD_USER_ID_KEY = 'salon_board_user_id'
 SALON_BOARD_PASSWORD_KEY = 'salon_board_password'
 SALON_BOARD_STYLIST_ID_KEY = 'salon_board_stylist_id'
-SALON_BOARD_SELECTED_COUPONS_KEY = 'salon_board_selected_coupons'
+SELECTED_COUPON_NAME_KEY = 'selected_coupon_name'
 
 @bp.route('/')
 @login_required
@@ -102,6 +102,7 @@ def generate():
     salon_url = session.get(SALON_URL_KEY, '')
     stylists = session.get(STYLISTS_KEY, [])
     coupons = session.get(COUPONS_KEY, [])
+    selected_coupon_name = session.get(SELECTED_COUPON_NAME_KEY, '')
     
     # テンプレート情報を取得
     selected_template = session.get(SELECTED_TEMPLATE_KEY, '')
@@ -220,12 +221,15 @@ def fetch_salon_info():
         
         # クーポン情報の取得
         coupon_scraper = CouponScraper(salon_url)
-        coupons = coupon_scraper.get_coupons()
+        coupons_data = coupon_scraper.get_coupons() # 辞書のリストを取得
+        
+        # クーポン名のリストに変換
+        coupons = [coupon['name'] for coupon in coupons_data if 'name' in coupon] 
         
         # セッションに保存
         session[SALON_URL_KEY] = salon_url
         session[STYLISTS_KEY] = stylists
-        session[COUPONS_KEY] = coupons
+        session[COUPONS_KEY] = coupons # 文字列のリストを保存
         
         flash(f'サロン情報を取得しました。スタイリスト: {len(stylists)}人、クーポン: {len(coupons)}件', 'success')
     except Exception as e:
@@ -258,7 +262,7 @@ def prepare_post():
     title = request.form.get('title', '').strip()
     content = request.form.get('content', '').strip()
     stylist_id = request.form.get('stylist_id', '').strip()
-    selected_coupons = request.form.getlist('coupons')
+    selected_coupon = request.form.get('selected_coupon', '').strip()
     template = request.form.get('template', '').strip()
     
     # 入力内容の検証
@@ -304,7 +308,10 @@ def post_to_salon_board():
         return redirect(url_for('blog.generate'))
     
     # クーポン名の取得
-    selected_coupons = request.form.getlist('selected_coupons')
+    selected_coupon = request.form.get('selected_coupon', '').strip()
+    
+    # SalonBoardPosterに渡す形式を調整 (空でなければリストに入れる)
+    coupon_names_list = [selected_coupon] if selected_coupon else []
     
     # テンプレートの取得
     template = session.get(SELECTED_TEMPLATE_KEY, '')
@@ -318,14 +325,14 @@ def post_to_salon_board():
         'content': generated_content['content'],
         'stylist_id': stylist_id,
         'image_paths': image_full_paths,
-        'coupon_names': selected_coupons,
+        'coupon_names': coupon_names_list,
         'template': template
     }
     
-    # ログイン情報とスタイリストIDをセッションに保存（パスワードは保存しない）
+    # ログイン情報と選択内容をセッションに保存（キーと値を変更）
     session[SALON_BOARD_USER_ID_KEY] = user_id
     session[SALON_BOARD_STYLIST_ID_KEY] = stylist_id
-    session[SALON_BOARD_SELECTED_COUPONS_KEY] = selected_coupons
+    session[SELECTED_COUPON_NAME_KEY] = selected_coupon
     
     # SalonBoardPosterのインスタンスを作成（デバッグしやすいようにヘッドフルモード）
     poster = SalonBoardPoster(headless=False, slow_mo=200)

@@ -119,8 +119,8 @@
             </p>
         </div>
         
-        <!-- スタイリスト・クーポン選択 -->
-        <form method="post" action="{{ url_for('blog.post_to_salon_board') }}" id="post-form" class="mb-0">
+        {# スタイリスト・クーポン選択フォームとサロンボード投稿フォームを統合 #}
+        <form method="post" action="{{ url_for('blog.post_to_salon_board') }}" id="post-form">
             <div class="row">
                 <div class="col-md-6 mb-3">
                     <label for="stylist-select" class="form-label">投稿者（スタイリスト）</label>
@@ -133,18 +133,28 @@
                 </div>
                 
                 <div class="col-md-6 mb-3">
-                    <label for="coupon-select" class="form-label">クーポン選択</label>
-                    <select class="form-select" id="coupon-select" name="selected_coupons" multiple>
-                        {% for coupon in coupons %}
-                        <option value="{{ coupon.name }}" {% if coupon.name in session.get('salon_board_selected_coupons', []) %}selected{% endif %}>{{ coupon.name }}</option>
-                        {% endfor %}
-                    </select>
-                    <small class="text-muted">複数選択する場合はCtrl+クリック</small>
+                    <label for="selected_coupon" class="form-label">クーポン選択</label>
+                    {% if coupons %}
+                        <select class="form-select" id="selected_coupon" name="selected_coupon">
+                            <option value="" {% if not session.get('selected_coupon_name', '') %}selected{% endif %}>-- クーポンを選択してください --</option>
+                            {% for coupon_name in coupons %}
+                                <option value="{{ coupon_name }}" 
+                                        {% if coupon_name == session.get('selected_coupon_name', '') %}selected{% endif %}>
+                                    {{ coupon_name }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                        <small class="text-muted">ブログに連携するクーポンを1つ選択できます。</small>
+                    {% else %}
+                        <p class="text-muted">利用可能なクーポン情報がありません。</p>
+                    {% endif %}
                 </div>
             </div>
+        </form>
         {% endif %}
     </div>
 
+    {# スタイリスト情報がある場合のみ、同じフォーム内でログイン情報を表示 #}
     {% if stylists %}
     <!-- 5. サロンボードログイン情報 -->
     <div class="simple-card">
@@ -157,14 +167,14 @@
                 <label for="salon-board-user-id" class="form-label">サロンボードID</label>
                 <div class="input-group">
                     <span class="input-group-text"><i class="bi bi-person"></i></span>
-                    <input type="text" class="form-control" id="salon-board-user-id" name="salon_board_user_id" value="{{ session.get('salon_board_user_id', '') }}" required>
+                    <input type="text" class="form-control" id="salon-board-user-id" name="salon_board_user_id" value="{{ session.get('salon_board_user_id', '') }}" required form="post-form">
                 </div>
             </div>
             <div class="col-md-6 mb-3">
                 <label for="salon-board-password" class="form-label">サロンボードパスワード</label>
                 <div class="input-group">
                     <span class="input-group-text"><i class="bi bi-lock"></i></span>
-                    <input type="password" class="form-control" id="salon-board-password" name="salon_board_password" required>
+                    <input type="password" class="form-control" id="salon-board-password" name="salon_board_password" required form="post-form">
                 </div>
                 <small class="text-muted">※パスワードはアプリに保存されません</small>
             </div>
@@ -174,10 +184,9 @@
             <i class="bi bi-exclamation-triangle-fill"></i> 投稿処理中にロボット認証が検出された場合、処理は自動的に中断されます。
         </div>
         
-        <button type="submit" class="btn btn-danger btn-lg w-100">
+        <button type="submit" class="btn btn-danger btn-lg w-100" form="post-form">
             <i class="bi bi-send-fill"></i> サロンボードに投稿
         </button>
-        </form>
     </div>
     {% endif %}
     {% endif %}
