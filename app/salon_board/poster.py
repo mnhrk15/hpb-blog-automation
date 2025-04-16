@@ -10,6 +10,59 @@ logger = logging.getLogger(__name__)
 class SalonBoardPoster:
     """サロンボードへのブログ投稿を自動化するクラス"""
 
+    # --- セレクタ定義 ---
+    _LOGIN_URL = "https://salonboard.com/login/"
+    _LOGIN_USER_ID_INPUT = "input[name='userId']"
+    _LOGIN_PASSWORD_INPUT_PRIMARY = "#jsiPwInput"
+    _LOGIN_PASSWORD_INPUT_ALT = "input[name='password']"
+    _LOGIN_BUTTON_PRIMARY = "#idPasswordInputForm > div > div > a"
+    _LOGIN_BUTTON_ALT = "a.common-CNCcommon__primaryBtn.loginBtnSize"
+    _LOGIN_FORM = "#idPasswordInputForm"
+    _DASHBOARD_GLOBAL_NAVI = "#globalNavi"
+    _NAVI_KEISAI_KANRI = "#globalNavi > ul.common-CLPcommon__globalNavi > li:nth-child(2) > a"
+    _NAVI_BLOG = "#cmsForm > div > div > ul > li:nth-child(9) > a"
+    _NAVI_NEW_POST = "#newPosts"
+    _BLOG_FORM_STYLIST_SELECT = "select#stylistId"
+    _BLOG_FORM_CATEGORY_SELECT = "select#blogCategoryCd"
+    _BLOG_FORM_TITLE_INPUT = "input#blogTitle"
+    _BLOG_FORM_CONTENT_TEXTAREA = "textarea#blogContents" # nicEdit用
+    _BLOG_FORM_NICEDIT_IFRAME = "iframe[id^='nicEdit']"
+    _BLOG_FORM_IMAGE_UPLOAD_BTN = "a#upload"
+    _BLOG_FORM_IMAGE_MODAL = "div.imageUploaderModal"
+    _BLOG_FORM_IMAGE_INPUT = "input#sendFile"
+    _BLOG_FORM_IMAGE_THUMBNAIL = "img.imageUploaderModalThumbnail"
+    _BLOG_FORM_IMAGE_SUBMIT_BTN_ACTIVE = "input.imageUploaderModalSubmitButton.isActive"
+    _BLOG_FORM_IMAGE_SUBMIT_BTN = "input.imageUploaderModalSubmitButton"
+    _BLOG_FORM_IMAGE_SUBMIT_BTN_XPATH = "//input[@value='登録する']"
+    _BLOG_FORM_COUPON_BTN = "a.jsc_SB_modal_trigger"
+    _BLOG_FORM_COUPON_MODAL_PRIMARY = "div#couponWrap"
+    _BLOG_FORM_COUPON_MODAL_ALT = "#couponArea"
+    _BLOG_FORM_COUPON_LABEL = "label" # モーダル内で使用
+    _BLOG_FORM_COUPON_TEXT = "p.couponText" # ラベル内で使用
+    _BLOG_FORM_COUPON_SETTING_BTN = "a.jsc_SB_modal_setting_btn"
+    _BLOG_FORM_COUPON_SETTING_BTN_XPATH = "//a[contains(text(), '設定する')]"
+    _BLOG_CONFIRM_BTN = "a#confirm"
+    _BLOG_UNREFLECT_BTN = "a#unReflect"
+    _BLOG_BACK_BTN = "a#back"
+
+    _ROBOT_SELECTORS = [
+        "iframe[src*='recaptcha']",
+        "iframe[src*='captcha']",
+        "div.g-recaptcha",
+        ".captcha-container",
+        "#captcha",
+        "input[name*='captcha']",
+        "[aria-label*='ロボット']",
+        "[aria-label*='認証']"
+    ]
+    _WIDGET_SELECTORS = [
+        '.karte-widget__container',
+        '[class*="_reception-Skin"]',
+        '[class*="_reception-MinimumWidget"]',
+        '[id^="karte-"]'
+    ]
+    # --- セレクタ定義 終了 ---
+
     def __init__(self, headless=False, slow_mo=100):
         """
         初期化メソッド
@@ -23,9 +76,9 @@ class SalonBoardPoster:
         self.playwright = None
         self.browser = None
         self.page = None
-        self.login_url = "https://salonboard.com/login/"
-        self.default_timeout = 180000  # デフォルトのタイムアウトを180秒に設定
-        self.max_retries = 3  # 追加: 最大再試行回数を設定
+        self.login_url = self._LOGIN_URL # 定数を使用
+        self.default_timeout = 180000
+        self.max_retries = 3
 
     def start(self):
         """Playwrightとブラウザを起動（自動化隠蔽強化版）"""
@@ -34,46 +87,35 @@ class SalonBoardPoster:
             
             # 自動化回避のためのオプションを強化
             launch_args = [
-                "--disable-blink-features=AutomationControlled",  # 重要: 自動化検出を回避
-                "--disable-infobars",                         # 「自動テスト...」のバーを非表示
+                "--disable-blink-features=AutomationControlled",
+                "--disable-infobars",
                 "--disable-extensions",
                 "--disable-dev-shm-usage", 
                 "--disable-gpu",
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
-                # "--start-maximized" # ヘッドレスでは不要な場合あり
-                # "--window-size=1920,1080" # viewport設定でカバー
             ]
-            
-            # ユーザーデータディレクトリを指定して永続コンテキストを使うことも検討できるが、
-            # まずは通常のコンテキストで隠蔽を試みる
-            # self.browser = self.playwright.chromium.launch_persistent_context(...) 
 
             self.browser = self.playwright.chromium.launch(
                 headless=self.headless,
-                slow_mo=self.slow_mo, # slow_mo は検知回避に役立つ場合がある
+                slow_mo=self.slow_mo,
                 args=launch_args
             )
             
-            # 一般的なブラウザの特性を持つコンテキストを作成
             context = self.browser.new_context(
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36", # より新しいバージョンに更新
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
                 viewport={"width": 1920, "height": 1080},
                 locale="ja-JP",
                 timezone_id="Asia/Tokyo",
-                # accept_downloads=True, # 必要に応じて
-                # geolocation={"longitude": 139.6917, "latitude": 35.6895}, # 必要に応じて
-                permissions=['geolocation'] # 必要に応じて通知などの権限も設定
+                permissions=['geolocation']
             )
             
             # JavaScript実行前の初期設定（自動化を隠す）
-            # navigator.webdriver を偽装
             context.add_init_script("""
                 Object.defineProperty(navigator, 'webdriver', {
                     get: () => undefined
                 });
             """)
-            # その他の検知ポイントを偽装 (例: プラグイン、言語など)
             context.add_init_script("""
                 // プラグイン情報の偽装
                 Object.defineProperty(navigator, 'plugins', {
@@ -87,18 +129,11 @@ class SalonBoardPoster:
                 try {
                     const getParameter = WebGLRenderingContext.prototype.getParameter;
                     WebGLRenderingContext.prototype.getParameter = function(parameter) {
-                        // UNMASKED_VENDOR_WEBGL と UNMASKED_RENDERER_WEBGL を偽装
-                        if (parameter === 37445) { // VENDOR
-                            return 'Google Inc. (Intel)';
-                        }
-                        if (parameter === 37446) { // RENDERER
-                            return 'ANGLE (Intel, Intel(R) Iris(TM) Plus Graphics 640, OpenGL 4.1)';
-                        }
+                        if (parameter === 37445) { return 'Google Inc. (Intel)'; }
+                        if (parameter === 37446) { return 'ANGLE (Intel, Intel(R) Iris(TM) Plus Graphics 640, OpenGL 4.1)'; }
                         return getParameter.call(this, parameter);
                     };
-                } catch (e) {
-                    console.error('WebGL spoofing failed:', e);
-                }
+                } catch (e) { console.error('WebGL spoofing failed:', e); }
             """)
 
             self.page = context.new_page()
@@ -129,19 +164,7 @@ class SalonBoardPoster:
         Returns:
             bool: ロボット認証が検出された場合はTrue、そうでない場合はFalse
         """
-        # よく使われるCAPTCHAのセレクタをチェック
-        selectors = [
-            "iframe[src*='recaptcha']",
-            "iframe[src*='captcha']",
-            "div.g-recaptcha",
-            ".captcha-container",
-            "#captcha",
-            "input[name*='captcha']",
-            "[aria-label*='ロボット']",
-            "[aria-label*='認証']"
-        ]
-        
-        for selector in selectors:
+        for selector in self._ROBOT_SELECTORS:
             try:
                 if self.page.query_selector(selector):
                     logger.warning(f"ロボット認証が検出されました: {selector}")
@@ -163,75 +186,41 @@ class SalonBoardPoster:
             bool: ログイン成功でTrue、失敗でFalse
         """
         try:
-            # ログインページに移動する前に、ページに到着したら実行するJavaScriptを準備
-            # これにより、ウィジェットが表示される前に非表示にする処理を仕込む
-            self.page.add_init_script("""
-                // MutationObserverを使用してDOM変更を監視し、ウィジェットを即座に非表示にする
-                (function() {
-                    function hideKarteWidgets() {
-                        // karteウィジェットの候補となるセレクタ
-                        const selectors = [
-                            '.karte-widget__container',
-                            '[class*="_reception-Skin"]',
-                            '[class*="_reception-MinimumWidget"]',
-                            '[id^="karte-"]'
-                        ];
-                        
-                        for (const selector of selectors) {
+            # JavaScript内のセレクタも定数を使うように変更 (f-stringを使用)
+            # ウィジェット非表示用JS
+            hide_widgets_js = f"""
+                (function() {{
+                    function hideKarteWidgets() {{
+                        const selectors = {json.dumps(self._WIDGET_SELECTORS)}; // 定数リストを使用
+                        for (const selector of selectors) {{
                             const elements = document.querySelectorAll(selector);
-                            for (const el of elements) {
+                            for (const el of elements) {{
                                 console.log('Hiding karte widget:', el);
-                                el.style.display = 'none';
-                                el.style.visibility = 'hidden';
-                                el.style.opacity = '0';
-                            }
-                        }
-                    }
-                    
-                    // 初期実行
+                                el.style.display = 'none'; el.style.visibility = 'hidden'; el.style.opacity = '0';
+                            }}
+                        }}
+                    }}
                     setTimeout(hideKarteWidgets, 500);
-                    
-                    // DOM変更を監視して実行
-                    const observer = new MutationObserver((mutations) => {
-                        hideKarteWidgets();
-                    });
-                    
-                    // ページ読み込み完了後にオブザーバーを設定
-                    if (document.readyState === 'loading') {
-                        document.addEventListener('DOMContentLoaded', () => {
-                            observer.observe(document.body, { childList: true, subtree: true });
-                            hideKarteWidgets();
-                        });
-                    } else {
-                        observer.observe(document.body, { childList: true, subtree: true });
-                        hideKarteWidgets();
-                    }
-                })();
-            """)
+                    const observer = new MutationObserver((mutations) => {{ hideKarteWidgets(); }});
+                    if (document.readyState === 'loading') {{
+                        document.addEventListener('DOMContentLoaded', () => {{ observer.observe(document.body, {{ childList: true, subtree: true }}); hideKarteWidgets(); }});
+                    }} else {{ observer.observe(document.body, {{ childList: true, subtree: true }}); hideKarteWidgets(); }}
+                }})();
+            """
+            self.page.add_init_script(hide_widgets_js)
             
-            # ログインページに移動
             logger.info(f"ログインページ({self.login_url})に移動します")
             self.page.goto(self.login_url, wait_until="networkidle")
             logger.info("ログインページの読み込みが完了しました")
             
-            # 少し待機してページが完全に読み込まれるのを待つ
             time.sleep(2)
             
-            # ウィジェットを強制的に非表示にする（追加分）
+            # ウィジェット強制非表示
             try:
-                # 変更: 要素の存在をチェックするシンプルな方法に変更
                 widget_exists = False
-                widget_selectors = [
-                    '.karte-widget__container',
-                    '[class*="_reception-Skin"]',
-                    '[class*="_reception-MinimumWidget"]',
-                    '[id^="karte-"]'
-                ]
-                
-                for selector in widget_selectors:
+                # 定数リストを使用
+                for selector in self._WIDGET_SELECTORS:
                     try:
-                        # タイムアウトを短く設定して存在チェック（100ms）
-                        # ノンブロッキングでチェックするため待ち時間を最小化
                         element = self.page.query_selector(selector)
                         if element:
                             widget_exists = True
@@ -243,96 +232,54 @@ class SalonBoardPoster:
                 
                 if widget_exists:
                     logger.info("ウィジェットが検出されました。非表示にします。")
-                    self.page.evaluate("""
-                        const selectors = [
-                            '.karte-widget__container',
-                            '[class*="_reception-Skin"]',
-                            '[class*="_reception-MinimumWidget"]',
-                            '[id^="karte-"]'
-                        ];
-                        
-                        for (const selector of selectors) {
+                    # JS内のセレクタも定数を使う (f-string)
+                    force_hide_js = f"""
+                        const selectors = {json.dumps(self._WIDGET_SELECTORS)};
+                        for (const selector of selectors) {{
                             const elements = document.querySelectorAll(selector);
-                            for (const el of elements) {
+                            for (const el of elements) {{
                                 console.log('Force hiding widget:', el);
-                                el.style.display = 'none';
-                                el.style.visibility = 'hidden';
-                                el.style.opacity = '0';
-                            }
-                        }
-                    """)
+                                el.style.display = 'none'; el.style.visibility = 'hidden'; el.style.opacity = '0';
+                            }}
+                        }}
+                    """
+                    self.page.evaluate(force_hide_js)
                     logger.info("ウィジェットの強制非表示を実行しました")
                 else:
                     logger.info("ウィジェットは検出されませんでした。非表示処理はスキップします。")
             except Exception as e:
                 logger.warning(f"ウィジェットの強制非表示中にエラー: {e}")
             
-            # ロボット認証が検出されたら中断
             if self.is_robot_detection_present():
                 logger.error("ログイン時にロボット認証が検出されました。処理を中断します。")
                 return False
             
-            # フォームの存在のみチェック（visible状態は要求しない）
             logger.info("入力フィールドを検索します")
             
-            # --- ここから完全にJavaScriptでログイン処理を実行 ---
+            # JavaScriptログインスクリプト (セレクタを定数化)
             js_login_script = f"""
             (function() {{
                 try {{
-                    // ユーザーIDとパスワードをセット
-                    const userIdInput = document.querySelector("input[name='userId']");
-                    const pwInput = document.querySelector("#jsiPwInput") || document.querySelector("input[name='password']");
-                    
-                    if (!userIdInput || !pwInput) {{
-                        console.error('Login inputs not found');
-                        return false;
-                    }}
-                    
-                    // 値を設定
-                    userIdInput.value = "{user_id}";
-                    pwInput.value = "{password}";
-                    
-                    // イベントを発火
+                    const userIdInput = document.querySelector("{self._LOGIN_USER_ID_INPUT}");
+                    const pwInput = document.querySelector("{self._LOGIN_PASSWORD_INPUT_PRIMARY}") || document.querySelector("{self._LOGIN_PASSWORD_INPUT_ALT}");
+                    if (!userIdInput || !pwInput) {{ console.error('Login inputs not found'); return false; }}
+                    userIdInput.value = "{user_id}"; pwInput.value = "{password}";
                     userIdInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
                     pwInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    
-                    // 強制的にフォーム送信（複数の方法を試す）
-                    const loginForm = document.querySelector("#idPasswordInputForm");
-                    const loginButton = document.querySelector("#idPasswordInputForm > div > div > a") || 
-                                      document.querySelector("a.common-CNCcommon__primaryBtn.loginBtnSize");
-                    
+                    const loginForm = document.querySelector("{self._LOGIN_FORM}");
+                    const loginButton = document.querySelector("{self._LOGIN_BUTTON_PRIMARY}") || document.querySelector("{self._LOGIN_BUTTON_ALT}");
                     if (loginButton) {{
-                        // 1. まずボタンクリックを試みる
-                        console.log('Clicking login button via JS');
-                        loginButton.click();
-                        
-                        // 念のため少し待って再度クリック
-                        setTimeout(() => {{
-                            try {{
-                                loginButton.click();
-                            }} catch (e) {{}}
-                        }}, 500);
+                        console.log('Clicking login button via JS'); loginButton.click();
+                        setTimeout(() => {{ try {{ loginButton.click(); }} catch (e) {{}} }}, 500);
                     }}
-                    
                     if (loginForm) {{
-                        // 2. フォーム送信も試みる
-                        setTimeout(() => {{
-                            try {{
-                                console.log('Submitting form via JS');
-                                loginForm.submit();
-                            }} catch (e) {{}}
-                        }}, 1000);
+                        setTimeout(() => {{ try {{ console.log('Submitting form via JS'); loginForm.submit(); }} catch (e) {{}} }}, 1000);
                     }}
-                    
                     return true;
-                }} catch (e) {{
-                    console.error('JS login error:', e);
-                    return false;
-                }}
+                }} catch (e) {{ console.error('JS login error:', e); return false; }}
             }})()
             """
             
-            # JavaScriptによるログイン実行
             logger.info("JavaScriptを使用してログイン処理を実行します")
             login_result = self.page.evaluate(js_login_script)
             
@@ -340,49 +287,37 @@ class SalonBoardPoster:
                 logger.error("JavaScriptによるログイン処理に失敗しました")
                 self.page.screenshot(path="js_login_error.png")
                 
-                # 通常の方法も試してみる（バックアップとして既存のコードを残す）
                 logger.info("通常の方法でログインを試みます")
                 
-                # ユーザーID入力 - JavaScriptによる直接操作
+                # 定数を使用
                 logger.info(f"ユーザーID '{user_id}' を入力します")
-                id_input_success = self._set_input_value_by_js("input[name='userId']", user_id)
-                
+                id_input_success = self._set_input_value_by_js(self._LOGIN_USER_ID_INPUT, user_id)
                 if not id_input_success:
                     logger.error("ユーザーID入力に失敗しました")
                     self.page.screenshot(path="id_input_error.png")
                     return False
                 
-                # パスワード入力 - JavaScriptによる直接操作
                 logger.info("パスワードを入力します")
-                password_input_success = self._set_input_value_by_js("#jsiPwInput", password)
-                
+                password_input_success = self._set_input_value_by_js(self._LOGIN_PASSWORD_INPUT_PRIMARY, password)
                 if not password_input_success:
-                    # 代替セレクタを試す
                     logger.info("代替セレクタでパスワード入力を試みます")
-                    password_input_success = self._set_input_value_by_js("input[name='password']", password)
-                    
+                    password_input_success = self._set_input_value_by_js(self._LOGIN_PASSWORD_INPUT_ALT, password)
                 if not password_input_success:
                     logger.error("パスワード入力に失敗しました")
                     self.page.screenshot(path="password_input_error.png")
                     return False
                 
-                # 入力値を確認
-                time.sleep(1)  # 入力完了を待つ
+                time.sleep(1)
                 logger.info("ログインボタンをクリックします")
                 
-                # ログインボタンクリック
-                login_click_success = self._click_element_by_js("#idPasswordInputForm > div > div > a")
-                
+                # 定数を使用
+                login_click_success = self._click_element(self._LOGIN_BUTTON_PRIMARY)
                 if not login_click_success:
-                    # 代替セレクタを試す
                     logger.info("代替セレクタでログインボタンクリックを試みます")
-                    login_click_success = self._click_element_by_js("a.common-CNCcommon__primaryBtn.loginBtnSize")
-                    
+                    login_click_success = self._click_element(self._LOGIN_BUTTON_ALT)
                 if not login_click_success:
-                    # フォーム送信を試す
                     logger.info("フォーム送信を試みます")
-                    form_submit_success = self._submit_form_by_js("#idPasswordInputForm")
-                    
+                    form_submit_success = self._submit_form_by_js(self._LOGIN_FORM)
                     if not form_submit_success:
                         logger.error("ログインボタンのクリックに失敗しました")
                         self.page.screenshot(path="login_button_error.png")
@@ -390,22 +325,18 @@ class SalonBoardPoster:
             else:
                 logger.info("JavaScriptによるログイン処理が成功しました")
             
-            # ダッシュボードが表示されるまで待機
             logger.info("ダッシュボードの表示を待機します...")
             try:
-                self.page.wait_for_selector("#globalNavi", timeout=self.default_timeout, state="visible")
+                # 定数を使用
+                self.page.wait_for_selector(self._DASHBOARD_GLOBAL_NAVI, timeout=self.default_timeout, state="visible")
                 logger.info("ダッシュボードの表示を確認しました")
             except TimeoutError as e:
-                # タイムアウトした場合、現在のURLとタイトルを記録
                 current_url = self.page.url
                 current_title = self.page.title()
                 logger.error(f"ログイン後のダッシュボード表示がタイムアウトしました。現在のURL: {current_url}, タイトル: {current_title}")
-                
-                # スクリーンショット撮影
                 self.page.screenshot(path="login_timeout_screenshot.png")
                 return False
                 
-            # ログイン後にロボット認証が検出されたら中断
             if self.is_robot_detection_present():
                 logger.error("ログイン後にロボット認証が検出されました。処理を中断します。")
                 return False
@@ -415,25 +346,20 @@ class SalonBoardPoster:
             
         except Exception as e:
             logger.error(f"ログイン処理中にエラーが発生しました: {e}")
-            # スクリーンショット撮影
             self.page.screenshot(path="login_error_screenshot.png")
             return False
             
     def _set_input_value_by_js(self, selector, value):
         """JavaScriptを使用して入力フィールドに値を設定する内部メソッド"""
         try:
-            # セレクタが存在するか確認
             if not self.page.query_selector(selector):
                 logger.warning(f"セレクタ '{selector}' が見つかりません")
                 return False
-                
-            # JavaScriptを使用して値を設定
             js_script = f"""
             (function() {{
-                var el = document.querySelector("{selector.replace('"', '\\"')}");
+                var el = document.querySelector("{selector.replace('"', '\\\\"')}");
                 if (el) {{
                     el.value = "{value}";
-                    // イベントを発火させる
                     var event = new Event('input', {{ bubbles: true }});
                     el.dispatchEvent(event);
                     return true;
@@ -442,689 +368,459 @@ class SalonBoardPoster:
             }})()
             """
             result = self.page.evaluate(js_script)
-            
             if result:
                 logger.info(f"JavaScriptを使用して値を設定しました: {selector}")
                 return True
-                
             return False
         except Exception as e:
             logger.warning(f"JavaScriptによる値設定中にエラー: {e}")
             return False
             
-    def _click_element_by_js(self, selector):
-        """JavaScriptを使用して要素をクリックする内部メソッド"""
+    def _click_element(self, selector: str, timeout: int = 10000, scroll_if_needed: bool = True) -> bool:
+        """指定されたセレクタの要素をクリックする (Locator優先、JSフォールバック付き)"""
         try:
-            # セレクタが存在するか確認
-            if not self.page.query_selector(selector):
-                logger.warning(f"セレクタ '{selector}' が見つかりません")
-                return False
-                
-            # まず通常のクリックを試す
+            element = self.page.locator(selector)
+            
+            # 要素が存在するか短時間で確認
             try:
-                self.page.click(selector)
-                logger.info(f"セレクタ '{selector}' を使用して要素をクリックしました")
+                element.wait_for(state="attached", timeout=timeout // 2) # attached: DOMに存在するか
+            except TimeoutError:
+                logger.warning(f"クリック対象の要素が見つかりません: {selector}")
+                return False
+            
+            # スクロールして表示
+            if scroll_if_needed:
+                try:
+                    element.scroll_into_view_if_needed(timeout=timeout // 4)
+                    time.sleep(0.5) # スクロール安定待ち
+                except Exception as scroll_err:
+                     logger.warning(f"要素表示のためのスクロール中にエラー: {scroll_err} (処理は続行)")
+            
+            # Playwrightのclickを試行
+            try:
+                element.click(timeout=timeout)
+                logger.info(f"要素をクリックしました (Locator): {selector}")
                 return True
             except Exception as click_err:
-                logger.warning(f"通常クリックに失敗: {click_err}")
-                
-                # JavaScriptを使用してクリック
-                js_script = f"""
-                (function() {{
-                    var el = document.querySelector("{selector.replace('"', '\\"')}");
-                    if (el) {{
-                        el.click();
-                        return true;
-                    }}
-                    return false;
-                }})()
-                """
-                result = self.page.evaluate(js_script)
-                
-                if result:
-                    logger.info(f"JavaScriptを使用して要素をクリックしました: {selector}")
+                logger.warning(f"Locatorクリックに失敗: {click_err}。JavaScriptクリックを試みます。")
+                # JavaScriptでクリックするフォールバック
+                try:
+                    element.evaluate("node => node.click()")
+                    logger.info(f"要素をクリックしました (JavaScript): {selector}")
                     return True
-                    
-                return False
+                except Exception as js_click_err:
+                    logger.error(f"JavaScriptクリックにも失敗: {js_click_err}")
+                    return False
         except Exception as e:
-            logger.warning(f"JavaScriptによるクリック中にエラー: {e}")
+            logger.error(f"要素クリック処理中に予期せぬエラー ({selector}): {e}", exc_info=True)
             return False
+
+    def _click_and_wait_navigation(self, click_selector: str, click_timeout: int = 10000, wait_timeout: int = 60000) -> bool:
+        """要素をクリックし、ページのナビゲーション完了 (networkidle) を待つ"""
+        logger.info(f"要素をクリックしてナビゲーションを待ちます: {click_selector}")
+        
+        # 要素をクリック
+        if not self._click_element(click_selector, timeout=click_timeout):
+            # _click_element 内でエラーログ出力済み
+            return False
+            
+        # ネットワークアイドル状態を待機
+        try:
+            logger.info(f"クリック後のネットワークアイドル状態を待機します (最大{wait_timeout}ms)")
+            self.page.wait_for_load_state("networkidle", timeout=wait_timeout)
+            logger.info("ネットワークアイドル状態に達しました。ナビゲーション完了とみなします。")
+            return True
+        except TimeoutError:
+            logger.error(f"ネットワークアイドル状態への移行がタイムアウトしました ({wait_timeout}ms)。ナビゲーション失敗の可能性があります。")
+            # 失敗してもページ遷移している可能性はあるため、呼び出し元でリカバリーを試みることも考慮。
+            # ここでは明確に失敗として False を返す。
+            return False
+        except Exception as e:
+             logger.error(f"ネットワークアイドル待機中にエラー: {e}", exc_info=True)
+             return False
             
     def _submit_form_by_js(self, form_selector):
         """JavaScriptを使用してフォームを送信する内部メソッド"""
         try:
             js_script = f"""
             (function() {{
-                var form = document.querySelector("{form_selector.replace('"', '\\"')}");
-                if (form) {{
-                    form.submit();
-                    return true;
-                }}
+                var form = document.querySelector("{form_selector.replace('"', '\\\\"')}");
+                if (form) {{ form.submit(); return true; }}
                 return false;
             }})()
             """
             result = self.page.evaluate(js_script)
-            
             if result:
                 logger.info(f"JavaScriptを使用してフォームを送信しました: {form_selector}")
                 return True
-                
             return False
         except Exception as e:
             logger.warning(f"JavaScriptによるフォーム送信中にエラー: {e}")
             return False
 
     def navigate_to_blog_post_page(self):
-        """
-        ブログ投稿ページに移動する
-        
-        Returns:
-            bool: 成功でTrue、失敗でFalse
-        """
+        """ブログ投稿ページに移動する"""
         for attempt in range(self.max_retries):
             try:
                 logger.info(f"ブログ投稿ページへの移動を試行中... (試行 {attempt+1}/{self.max_retries})")
                 
-                # 「掲載管理」ボタンのセレクタ
-                keisai_kanri_selector = "#globalNavi > ul.common-CLPcommon__globalNavi > li:nth-child(2) > a"
-
-                # --- 「掲載管理」ボタンクリック処理の改善 ---
-                logger.info(f"「掲載管理」ボタン ({keisai_kanri_selector}) を待機し、クリックします")
-                try:
-                    # ボタンが表示され、有効になるまで待機 (タイムアウトを少し長めに設定)
-                    self.page.wait_for_selector(
-                        keisai_kanri_selector, 
-                        state="visible", 
-                        timeout=60000 # ダッシュボード読み込み完了まで待つため長めに
-                    )
-                    logger.info("「掲載管理」ボタンが表示されました")
-
-                    # Locatorを使用してクリック (より推奨される方法)
-                    keisai_kanri_button = self.page.locator(keisai_kanri_selector)
-                    
-                    # クリック前に要素を確実に表示させる
-                    keisai_kanri_button.scroll_into_view_if_needed()
-                    time.sleep(1) # スクロールや描画の安定待ち
-
-                    # クリック実行
-                    keisai_kanri_button.click(timeout=10000) # クリック自体のタイムアウト
-                    logger.info("「掲載管理」ボタンをクリックしました (Locator)")
-
-                except Exception as click_err:
-                    logger.warning(f"Locatorによる「掲載管理」ボタンのクリックに失敗: {click_err}。JavaScriptでのクリックを試みます。")
-                    try:
-                        # JavaScriptでクリックするフォールバック
-                        self.page.evaluate(f"document.querySelector('{keisai_kanri_selector}').click()")
-                        logger.info("「掲載管理」ボタンをクリックしました (JavaScript)")
-                    except Exception as js_click_err:
-                        logger.error(f"JavaScriptによる「掲載管理」ボタンのクリックにも失敗: {js_click_err}")
-                        # エラーが続く場合は再試行ループへ
-                        if attempt < self.max_retries - 1:
-                            logger.warning(f"「掲載管理」ボタンのクリックに失敗しました。再試行します... ({attempt+1}/{self.max_retries})")
-                            time.sleep(3) # 再試行前に少し待つ
-                            continue
-                        else:
-                            self.page.screenshot(path="keisai_kanri_click_error.png")
-                            return False
-                # --- 「掲載管理」ボタンクリック処理の改善 終了 ---
-
-                # ネットワークアクティビティが落ち着くまで待機 (クリック後のページ遷移完了を待つ)
-                logger.info("掲載管理ページへの遷移（ネットワークアイドル）を待機します")
-                self.page.wait_for_load_state("networkidle", timeout=60000) 
-                logger.info("掲載管理ページの読み込みが完了しました")
-
-                # ロボット認証が検出されたら中断
-                if self.is_robot_detection_present():
-                    logger.error("掲載管理ページでロボット認証が検出されました。処理を中断します。")
-                    return False
-                
-                # 「ブログ」ボタンのセレクタ
-                blog_button_selector = "#cmsForm > div > div > ul > li:nth-child(9) > a"
-                
-                # 「ブログ」ボタンをクリック
-                logger.info(f"「ブログ」ボタン ({blog_button_selector}) を待機し、クリックします")
-                try:
-                    self.page.wait_for_selector(
-                        blog_button_selector, 
-                        state="visible", 
-                        timeout=30000
-                    )
-                    # Locator使用を推奨するが一貫性のためpage.clickでも可
-                    self.page.locator(blog_button_selector).click(timeout=10000)
-                    logger.info("「ブログ」ボタンをクリックしました")
-
-                except Exception as blog_click_err:
-                     logger.error(f"「ブログ」ボタンのクリックに失敗: {blog_click_err}")
-                     if attempt < self.max_retries - 1:
-                         logger.warning(f"「ブログ」ボタンのクリックに失敗しました。再試行します... ({attempt+1}/{self.max_retries})")
-                         time.sleep(3)
-                         continue
-                     else:
-                         self.page.screenshot(path="blog_button_click_error.png")
-                         return False
-
-                # ネットワークアクティビティが落ち着くまで待機
-                logger.info("ブログ管理ページへの遷移（ネットワークアイドル）を待機します")
-                self.page.wait_for_load_state("networkidle", timeout=60000)
-                logger.info("ブログ管理ページの読み込みが完了しました")
-                
-                # ロボット認証が検出されたら中断
-                if self.is_robot_detection_present():
-                    logger.error("ブログ管理ページでロボット認証が検出されました。処理を中断します。")
-                    return False
-                
-                # 「新規投稿」ボタンのセレクタ
-                new_post_button_selector = "#newPosts"
-
-                # 「新規投稿」ボタンをクリック
-                logger.info(f"「新規投稿」ボタン ({new_post_button_selector}) を待機し、クリックします")
-                try:
-                    self.page.wait_for_selector(new_post_button_selector, state="visible", timeout=30000)
-                    self.page.locator(new_post_button_selector).click(timeout=10000)
-                    logger.info("「新規投稿」ボタンをクリックしました")
-
-                except Exception as new_post_click_err:
-                    logger.error(f"「新規投稿」ボタンのクリックに失敗: {new_post_click_err}")
+                # --- 1. 「掲載管理」をクリックして待機 ---
+                if not self._click_and_wait_navigation(self._NAVI_KEISAI_KANRI):
+                    logger.error("「掲載管理」へのナビゲーションに失敗しました。")
+                    # エラーが続く場合はリトライループへ
                     if attempt < self.max_retries - 1:
-                         logger.warning(f"「新規投稿」ボタンのクリックに失敗しました。再試行します... ({attempt+1}/{self.max_retries})")
-                         time.sleep(3)
-                         continue
-                    else:
-                         self.page.screenshot(path="new_post_button_click_error.png")
-                         return False
-
-                # ネットワークアクティビティが落ち着くまで待機
-                logger.info("新規投稿ページへの遷移（ネットワークアイドル）を待機します")
-                self.page.wait_for_load_state("networkidle", timeout=60000)
-                logger.info("新規投稿ページの読み込みが完了しました")
-                
-                # 投稿フォームの主要要素（スタイリスト選択）が表示されるまで待機
-                logger.info("ブログ投稿フォームの主要素 (select#stylistId) を待機します")
-                try:
-                    self.page.wait_for_selector("select#stylistId", state="visible", timeout=60000)
-                    logger.info("ブログ投稿フォームの表示を確認しました")
-                except TimeoutError:
-                    # 最終試行でなければ再試行
-                    if attempt < self.max_retries - 1:
-                        logger.warning(f"ブログ投稿フォームの表示がタイムアウトしました。再試行します... ({attempt+1}/{self.max_retries})")
-                        # 念のためダッシュボードに戻って再試行
-                        try:
-                            logger.info("ダッシュボードに戻ります...")
-                            self.page.goto("https://salonboard.com/main/", wait_until="networkidle", timeout=60000)
-                        except Exception as goto_err:
-                            logger.warning(f"ダッシュボードへの移動に失敗: {goto_err}")
-                            time.sleep(5) # 失敗したら少し長めに待つ
+                        logger.warning(f"リトライします... ({attempt+1}/{self.max_retries})")
+                        self._try_recover_and_wait() # 回復試行
                         continue
                     else:
-                        logger.error(f"ブログ投稿フォームの表示が{self.max_retries}回タイムアウトしました。処理を中断します。")
-                        # 現在の状態をスクリーンショット
-                        self.page.screenshot(path="blog_form_timeout.png")
-                        return False
+                        self.page.screenshot(path="keisai_kanri_navigation_error.png"); return False
                 
-                # ロボット認証が検出されたら中断
+                logger.info("掲載管理ページの読み込み完了。")
                 if self.is_robot_detection_present():
-                    logger.error("新規投稿ページでロボット認証が検出されました。処理を中断します。")
-                    return False
-                    
-                logger.info("ブログ投稿ページへの移動に成功しました")
-                return True # 成功したらループを抜ける
+                    logger.error("掲載管理ページでロボット認証が検出されました。処理を中断します。"); return False
+
+                # --- 2. 「ブログ」をクリックして待機 ---
+                if not self._click_and_wait_navigation(self._NAVI_BLOG):
+                    logger.error("「ブログ」管理ページへのナビゲーションに失敗しました。")
+                    if attempt < self.max_retries - 1:
+                        logger.warning(f"リトライします... ({attempt+1}/{self.max_retries})")
+                        self._try_recover_and_wait() # 回復試行
+                        continue
+                    else:
+                        self.page.screenshot(path="blog_navigation_error.png"); return False
                 
+                logger.info("ブログ管理ページの読み込み完了。")
+                if self.is_robot_detection_present():
+                    logger.error("ブログ管理ページでロボット認証が検出されました。処理を中断します。"); return False
+
+                # --- 3. 「新規投稿」をクリックして待機 ---
+                if not self._click_and_wait_navigation(self._NAVI_NEW_POST):
+                    logger.error("「新規投稿」ページへのナビゲーションに失敗しました。")
+                    if attempt < self.max_retries - 1:
+                        logger.warning(f"リトライします... ({attempt+1}/{self.max_retries})")
+                        self._try_recover_and_wait() # 回復試行
+                        continue
+                    else:
+                        self.page.screenshot(path="new_post_navigation_error.png"); return False
+                
+                logger.info("新規投稿ページの読み込み完了。")
+                if self.is_robot_detection_present():
+                    logger.error("新規投稿ページでロボット認証が検出されました。処理を中断します。"); return False
+                    
+                # --- 4. ブログ投稿フォームの表示を確認 ---
+                logger.info(f"ブログ投稿フォームの主要素 ({self._BLOG_FORM_STYLIST_SELECT}) を待機します")
+                try:
+                    self.page.wait_for_selector(self._BLOG_FORM_STYLIST_SELECT, state="visible", timeout=60000)
+                    logger.info("ブログ投稿フォームの表示を確認しました。ナビゲーション成功。")
+                    return True # 全てのステップが成功
+                except TimeoutError:
+                    logger.error("ブログ投稿フォームの表示確認がタイムアウトしました。")
+                    if attempt < self.max_retries - 1:
+                        logger.warning(f"リトライします... ({attempt+1}/{self.max_retries})")
+                        self._try_recover_and_wait() # 回復試行
+                        continue
+                    else:
+                        logger.error(f"ブログ投稿フォームの表示確認が{self.max_retries}回タイムアウトしました。")
+                        self.page.screenshot(path="blog_form_visible_timeout.png"); return False
+
             except Exception as e:
-                # 最終試行でなければ再試行
+                # 予期せぬエラー（クリック失敗、ネットワークエラー以外）
+                logger.error(f"ナビゲーション中に予期せぬエラーが発生しました: {e}", exc_info=True)
                 if attempt < self.max_retries - 1:
-                    logger.warning(f"ブログ投稿ページへの移動中に予期せぬエラーが発生しました: {e}。再試行します... ({attempt+1}/{self.max_retries})", exc_info=True)
-                    time.sleep(5)  # 少し長めに待機してから再試行
-                    # エラー発生時はダッシュボードに戻ることを試みる
-                    try:
-                        logger.info("エラー発生のため、ダッシュボードに戻ります...")
-                        self.page.goto("https://salonboard.com/main/", wait_until="networkidle", timeout=60000)
-                    except Exception as goto_err:
-                        logger.warning(f"エラー後のダッシュボードへの移動に失敗: {goto_err}")
-                        time.sleep(5)
+                    logger.warning(f"リトライします... ({attempt+1}/{self.max_retries})")
+                    self._try_recover_and_wait() # 回復試行
                     continue
                 else:
-                    logger.error(f"ブログ投稿ページへの移動中に{self.max_retries}回エラーが発生しました: {e}", exc_info=True)
-                    # 現在の状態をスクリーンショット
-                    self.page.screenshot(path="blog_navigation_error.png")
-                    return False
+                    logger.error(f"ナビゲーション中に{self.max_retries}回予期せぬエラーが発生しました。")
+                    self.page.screenshot(path="navigation_unexpected_error.png"); return False
         
-        # ループが完了しても成功しなかった場合 (通常はループ内でreturnされるはず)
+        # ループが完了しても成功しなかった場合
         logger.error("最大再試行回数に達しましたが、ブログ投稿ページへの移動に失敗しました。")
         return False
 
-    def set_rich_text_content(self, content):
-        """
-        nicEditリッチテキストエディタにコンテンツを設定する
-        
-        Args:
-            content (str): 設定するHTML内容（またはプレーンテキスト）
-            
-        Returns:
-            bool: 成功でTrue、失敗でFalse
-        """
+    def _try_recover_and_wait(self, wait_seconds=5):
+        """エラー発生時にダッシュボードに戻る試行と待機を行う"""
         try:
-            # content 文字列を適切にエスケープしてJSリテラルにする
-            # テンプレートリテラル内で安全に使えるようにエスケープ
+            logger.info(f"エラー回復試行: ダッシュボードに戻り{wait_seconds}秒待機します...")
+            self.page.goto(self._LOGIN_URL.replace("/login/", "/main/"), wait_until="networkidle", timeout=60000) # メインページへ
+        except Exception as goto_err:
+            logger.warning(f"エラー後のダッシュボードへの移動に失敗: {goto_err}")
+        time.sleep(wait_seconds)
+
+    def set_rich_text_content(self, content):
+        """nicEditリッチテキストエディタにコンテンツを設定する"""
+        try:
             escaped_content = content.replace('\\\\', '\\\\\\\\').replace('`', '\\`').replace('$', '\\$')
             
-            # JavaScriptを使用してnicEditエディタの内容を設定
-            # 変更: evaluateの第2引数を使わず、直接JSコードに埋め込む
+            # JS内の editor ID は定数化しない (nicEditors.findEditor の引数)
             js_script = f"""
             (function() {{
                 try {{
                     var editorInstance = nicEditors.findEditor('blogContents');
-                    if (editorInstance) {{
-                        // 確実に文字列として渡す
-                        editorInstance.setContent(`{escaped_content}`); 
-                        return true;
-                    }} else {{
-                        console.error('nicEdit editor instance not found for blogContents');
-                        return false;
-                    }}
-                }} catch(e) {{
-                    console.error('nicEdit操作エラー:', e);
-                    return false;
-                }}
+                    if (editorInstance) {{ editorInstance.setContent(`{escaped_content}`); return true; }}
+                    else {{ console.error('nicEdit editor instance not found for blogContents'); return false; }}
+                }} catch(e) {{ console.error('nicEdit操作エラー:', e); return false; }}
             }})()
             """
-            logger.debug(f"Executing nicEdit script with content: {escaped_content[:100]}...") # デバッグ用に最初の100文字だけログ出力
-            result = self.page.evaluate(js_script) # evaluateの第2引数は削除
+            logger.debug(f"Executing nicEdit script with content: {escaped_content[:100]}...")
+            result = self.page.evaluate(js_script)
             
             if result:
-                logger.info("JavaScriptを使用してnicEditに内容を設定しました")
-                return True
+                logger.info("JavaScriptを使用してnicEditに内容を設定しました"); return True
             else:
                 logger.warning("JavaScriptを使用したnicEditへの内容設定に失敗しました。代替手段を試みます。")
-                # 代替手段: より直接的にiframeを操作
                 try:
                     logger.info("代替方法でエディタに本文を設定します")
-                    # nicEditが生成するiframeのセレクタを確認 (実際のサイトで確認が必要な場合あり)
-                    iframe_selector = "iframe[id^='nicEdit']" # 一般的なnicEditのiframeセレクタ
+                    # 定数を使用
+                    iframe_selector = self._BLOG_FORM_NICEDIT_IFRAME
                     iframe = self.page.frame_locator(iframe_selector) 
-                    
-                    if iframe.count() > 0: # iframeが存在するか確認
-                        # iframe内のbody要素に直接コンテンツを設定 (fillはテキスト入力向き)
+                    if iframe.count() > 0:
                         iframe.locator("body").fill(content) 
-                        # 必要であればHTMLとして設定:
-                        # iframe.locator("body").evaluate(f'element => element.innerHTML = `{escaped_content}`')
                         logger.info("iframe内のbodyに内容を設定しました")
                     else:
                         logger.warning(f"nicEditのiframe ({iframe_selector}) が見つかりません。通常のテキストエリアとして操作を試みます。")
-                        # 通常のテキストエリアとして操作を試みる
-                        self.page.fill("textarea#blogContents", content)
-                        logger.info("textarea#blogContentsに内容を設定しました")
-                    return True # 代替手段が成功したとみなす (エラーが出なければ)
-
+                        # 定数を使用
+                        self.page.fill(self._BLOG_FORM_CONTENT_TEXTAREA, content)
+                        logger.info(f"{self._BLOG_FORM_CONTENT_TEXTAREA} に内容を設定しました")
+                    return True
                 except Exception as inner_e:
-                    logger.error(f"代替方法での本文設定中にエラー: {inner_e}", exc_info=True)
-                    return False # 代替手段も失敗
-                
+                    logger.error(f"代替方法での本文設定中にエラー: {inner_e}", exc_info=True); return False
         except Exception as e:
-            logger.error(f"リッチテキストエディタの操作中にエラーが発生しました: {e}", exc_info=True)
-            return False
+            logger.error(f"リッチテキストエディタの操作中にエラーが発生しました: {e}", exc_info=True); return False
 
     def upload_image(self, image_path):
-        """
-        画像をアップロードする
-        
-        Args:
-            image_path (str): アップロードする画像のパス
-            
-        Returns:
-            bool: 成功でTrue、失敗でFalse
-        """
+        """画像をアップロードする"""
         try:
-            # 「画像アップロード」ボタンをクリック
+            # 定数を使用
             logger.info("画像アップロードボタンをクリックします")
-            self.page.click("a#upload")
+            self.page.click(self._BLOG_FORM_IMAGE_UPLOAD_BTN)
             
-            # 画像アップロードモーダルの表示を待機
             try:
                 logger.info("画像アップロードモーダルの表示を待機します")
-                self.page.wait_for_selector("div.imageUploaderModal", timeout=10000)
+                # 定数を使用
+                self.page.wait_for_selector(self._BLOG_FORM_IMAGE_MODAL, timeout=10000)
             except TimeoutError:
-                logger.error("画像アップロードモーダルの表示がタイムアウトしました")
-                return False
+                logger.error("画像アップロードモーダルの表示がタイムアウトしました"); return False
             
-            # ファイルインプットに画像を設定
             logger.info(f"画像ファイル {image_path} を選択します")
-            self.page.set_input_files("input#sendFile", image_path)
+            # 定数を使用
+            self.page.set_input_files(self._BLOG_FORM_IMAGE_INPUT, image_path)
             
-            # 画像が選択されたことを確認
             try:
                 logger.info("画像のサムネイルが表示されるのを待機します")
-                self.page.wait_for_selector("img.imageUploaderModalThumbnail", timeout=20000, state="visible")
-                # 登録するボタンが有効になるのを待つ
-                self.page.wait_for_selector("input.imageUploaderModalSubmitButton.isActive", timeout=10000)
+                # 定数を使用
+                self.page.wait_for_selector(self._BLOG_FORM_IMAGE_THUMBNAIL, timeout=20000, state="visible")
+                self.page.wait_for_selector(self._BLOG_FORM_IMAGE_SUBMIT_BTN_ACTIVE, timeout=10000)
             except TimeoutError:
                 logger.warning("画像サムネイルの表示確認がタイムアウトしました。処理を継続します。")
             
-            # 登録するボタンをクリック
             logger.info("「登録する」ボタンをクリックします")
             try:
-                self.page.click("input.imageUploaderModalSubmitButton")
+                # 定数を使用
+                self.page.click(self._BLOG_FORM_IMAGE_SUBMIT_BTN)
             except Exception as button_err:
                 logger.warning(f"標準セレクタでの登録ボタンのクリックに失敗しました: {button_err}")
                 try:
-                    # XPathを使用した代替アプローチ
-                    self.page.click("//input[@value='登録する']")
+                    # 定数を使用 (XPath)
+                    self.page.click(self._BLOG_FORM_IMAGE_SUBMIT_BTN_XPATH)
                 except Exception as xpath_err:
                     logger.warning(f"XPathでの登録ボタンのクリックにも失敗しました: {xpath_err}")
             
-            # モーダルが閉じるのを待つ
             logger.info("モーダルが閉じるのを待機します")
             time.sleep(3)
-            
             return True
             
         except Exception as e:
-            logger.error(f"画像アップロード中にエラーが発生しました: {e}")
-            return False
+            logger.error(f"画像アップロード中にエラーが発生しました: {e}"); return False
 
     def select_stylist(self, stylist_id):
-        """
-        スタイリストを選択する
-        
-        Args:
-            stylist_id (str): 選択するスタイリストのID
-            
-        Returns:
-            bool: 成功でTrue、失敗でFalse
-        """
+        """スタイリストを選択する"""
         try:
-            # スタイリストドロップダウンからスタイリストを選択
-            self.page.select_option("select#stylistId", stylist_id)
+            # 定数を使用
+            self.page.select_option(self._BLOG_FORM_STYLIST_SELECT, stylist_id)
             return True
         except Exception as e:
-            logger.error(f"スタイリスト選択中にエラーが発生しました: {e}")
-            return False
+            logger.error(f"スタイリスト選択中にエラーが発生しました: {e}"); return False
 
     def select_coupon(self, coupon_names):
-        """
-        クーポンを選択する (filterメソッド使用版)
-        
-        Args:
-            coupon_names (list): 選択するクーポン名のリスト
-            
-        Returns:
-            bool: 成功でTrue、失敗でFalse
-        """
+        """クーポンを選択する (filterメソッド使用版)"""
         try:
-            coupon_button_selector = "a.jsc_SB_modal_trigger"
-            coupon_modal_selectors = ["div#couponWrap", "#couponArea"] # メインと代替セレクタ
+            # 定数を使用
+            coupon_button_selector = self._BLOG_FORM_COUPON_BTN
+            coupon_modal_selectors = [self._BLOG_FORM_COUPON_MODAL_PRIMARY, self._BLOG_FORM_COUPON_MODAL_ALT]
 
-            # --- クーポン選択ボタン クリック処理 (強化) ---
             logger.info(f"クーポン選択ボタン ({coupon_button_selector}) を待機します")
             try:
                 coupon_button = self.page.locator(coupon_button_selector)
                 coupon_button.wait_for(state="visible", timeout=10000)
-                # クリック可能になるまで待機（例: enabled状態を待つ）
-                # coupon_button.wait_for(state="enabled", timeout=5000) # 有効状態を待つ場合
             except TimeoutError:
                 logger.error(f"クーポン選択ボタン ({coupon_button_selector}) が表示されませんでした")
-                self.page.screenshot(path="coupon_button_not_visible.png")
-                return False
+                self.page.screenshot(path="coupon_button_not_visible.png"); return False
 
             logger.info("クーポン選択ボタンをクリックします")
             clicked = False
             try:
-                coupon_button.scroll_into_view_if_needed()
-                time.sleep(0.5)
-                coupon_button.click(timeout=5000)
-                clicked = True
+                coupon_button.scroll_into_view_if_needed(); time.sleep(0.5)
+                coupon_button.click(timeout=5000); clicked = True
                 logger.info("Playwrightのclickでクーポン選択ボタンをクリックしました")
             except Exception as e:
                 logger.warning(f"Playwrightのclick失敗: {e}。他の方法を試みます。")
                 try:
                     logger.info("JavaScript click を試行")
-                    coupon_button.evaluate("node => node.click()")
-                    clicked = True
+                    coupon_button.evaluate("node => node.click()"); clicked = True
                     logger.info("JavaScript clickでクーポン選択ボタンをクリックしました")
                 except Exception as js_e:
                     logger.warning(f"JavaScript click失敗: {js_e}。dispatch_eventを試みます。")
                     try:
                         logger.info("dispatch_event('click') を試行")
-                        coupon_button.dispatch_event('click')
-                        clicked = True
+                        coupon_button.dispatch_event('click'); clicked = True
                         logger.info("dispatch_event('click')でクーポン選択ボタンをクリックしました")
                     except Exception as dispatch_e:
                          logger.error(f"全てのクリック方法でクーポン選択ボタンのクリックに失敗: {dispatch_e}")
-                         self.page.screenshot(path="coupon_button_click_failed.png")
-                         return False
+                         self.page.screenshot(path="coupon_button_click_failed.png"); return False
+            if not clicked: logger.error("クーポン選択ボタンをクリックできませんでした。"); return False
 
-            if not clicked:
-                 logger.error("クーポン選択ボタンをクリックできませんでした。")
-                 return False
-
-            # --- モーダル表示待機 (変更なし部分も含む) ---
             modal_visible = False
             logger.info(f"クーポン選択モーダルの表示を待機します (セレクタ: {coupon_modal_selectors})")
             start_time = time.time()
-            while time.time() - start_time < self.default_timeout / 1000: # 設定されたタイムアウト時間まで待つ
+            while time.time() - start_time < self.default_timeout / 1000:
                 for selector in coupon_modal_selectors:
                     try:
-                        # ページ上に存在し、かつ表示されているかを確認
-                        if self.page.locator(selector).is_visible(timeout=1000): # 短いタイムアウトでチェック
-                             logger.info(f"クーポン選択モーダル ({selector}) が表示されました")
-                             modal_visible = True
-                             break # モーダルが見つかったらループを抜ける
-                    except Exception:
-                        # is_visible でエラーが出ても無視して次のセレクタへ
-                        continue
-                if modal_visible:
-                    break # モーダルが見つかったら待機ループも抜ける
-                time.sleep(1) # 1秒待って再試行
-
+                        if self.page.locator(selector).is_visible(timeout=1000):
+                             logger.info(f"クーポン選択モーダル ({selector}) が表示されました"); modal_visible = True; break
+                    except Exception: continue
+                if modal_visible: break
+                time.sleep(1)
             if not modal_visible:
                  logger.error(f"クーポン選択モーダルの表示がタイムアウトしました ({self.default_timeout}ms)")
-                 self.page.screenshot(path="coupon_modal_timeout_screenshot.png")
-                 return False
+                 self.page.screenshot(path="coupon_modal_timeout_screenshot.png"); return False
 
-            # --- クーポン選択処理 (filterメソッド使用) ---
             logger.info("クーポン選択処理を開始します (filter使用)")
             all_coupons_selected = True
             for coupon_name in coupon_names:
                 logger.info(f"クーポン '{coupon_name}' を選択します")
                 found_and_clicked = False
                 cleaned_coupon_name = coupon_name.strip()
-                if not cleaned_coupon_name:
-                    logger.warning("空のクーポン名のためスキップ")
-                    continue
-
+                if not cleaned_coupon_name: logger.warning("空のクーポン名のためスキップ"); continue
                 try:
-                    # モーダル内のすべてのラベルを取得
-                    all_labels = self.page.locator(f"{coupon_modal_selectors[0]} label") # モーダルが表示されている前提
+                    # 定数を使用
+                    all_labels = self.page.locator(f"{coupon_modal_selectors[0]} {self._BLOG_FORM_COUPON_LABEL}")
                     logger.debug(f"モーダル内のラベル候補数: {all_labels.count()}")
-
-                    # 各ラベルをループしてテキストを比較
                     for i in range(all_labels.count()):
                         label = all_labels.nth(i)
-                        # ラベル内のp.couponText要素を取得
-                        coupon_text_element = label.locator("p.couponText")
-
+                        # 定数を使用
+                        coupon_text_element = label.locator(self._BLOG_FORM_COUPON_TEXT)
                         if coupon_text_element.count() > 0:
-                            # テキスト内容を取得して比較 (前後の空白無視、部分一致、大文字小文字無視)
                             actual_text = coupon_text_element.first.inner_text().strip()
                             logger.debug(f"ラベル {i} のテキスト: '{actual_text}'")
                             if cleaned_coupon_name.lower() in actual_text.lower():
                                 logger.info(f"クーポン '{cleaned_coupon_name}' がテキスト '{actual_text}' にマッチしました。クリックを試みます。")
                                 try:
-                                    label.scroll_into_view_if_needed()
-                                    time.sleep(0.5)
-                                    label.click(timeout=5000)
-                                    found_and_clicked = True
-                                    logger.info(f"クーポン '{cleaned_coupon_name}' をクリックしました。")
-                                    time.sleep(0.3)
-                                    break # マッチしてクリックしたらこのクーポンのループは終了
+                                    label.scroll_into_view_if_needed(); time.sleep(0.5)
+                                    label.click(timeout=5000); found_and_clicked = True
+                                    logger.info(f"クーポン '{cleaned_coupon_name}' をクリックしました。"); time.sleep(0.3); break
                                 except Exception as click_err:
                                      logger.warning(f"クーポン '{cleaned_coupon_name}' のクリックに失敗: {click_err}。念のため次の候補も探します。")
-                                     # JavaScriptクリックなどを試すことも可能
-                        else:
-                             logger.debug(f"ラベル {i} に p.couponText が見つかりません。")
-
-                    if not found_and_clicked:
-                        logger.warning(f"クーポン '{cleaned_coupon_name}' がモーダル内で見つからないか、クリックできませんでした。")
-
-                except Exception as e:
-                    logger.error(f"クーポン '{coupon_name}' の選択処理中に予期せぬエラー: {e}", exc_info=True)
-
-                if not found_and_clicked:
-                     all_coupons_selected = False
+                        else: logger.debug(f"ラベル {i} に {self._BLOG_FORM_COUPON_TEXT} が見つかりません。")
+                    if not found_and_clicked: logger.warning(f"クーポン '{cleaned_coupon_name}' がモーダル内で見つからないか、クリックできませんでした。")
+                except Exception as e: logger.error(f"クーポン '{coupon_name}' の選択処理中に予期せぬエラー: {e}", exc_info=True)
+                if not found_and_clicked: all_coupons_selected = False
 
             if not all_coupons_selected:
                  logger.error("一部またはすべてのクーポンの選択に失敗しました。")
                  self.page.screenshot(path="coupon_selection_error_screenshot.png")
-                 # return False # 失敗しても設定ボタンは試す
 
-            # --- 「設定する」ボタンクリック処理 (変更なし部分も含む) ---
             logger.info("「設定する」ボタンをクリックします")
             try:
-                # ボタンが表示されるまで待つ
-                setting_button_selector = "a.jsc_SB_modal_setting_btn"
+                # 定数を使用
+                setting_button_selector = self._BLOG_FORM_COUPON_SETTING_BTN
                 setting_button = self.page.locator(setting_button_selector)
-                setting_button.wait_for(state="visible", timeout=10000) # 少し長めに待つ
-                
-                # is_disableクラスがないことを確認 (クリック可能か)
+                setting_button.wait_for(state="visible", timeout=10000)
                 if "is_disable" not in (setting_button.get_attribute("class") or ""):
                     logger.info("「設定する」ボタンが有効です。クリックします。")
                     setting_button.click(timeout=5000)
                 else:
-                     logger.warning("「設定する」ボタンが無効状態 (is_disable) です。クリックをスキップします。")
-                     # クーポン選択に失敗している可能性が高い
-                     return False # 設定できないので失敗とする
-
+                     logger.warning("「設定する」ボタンが無効状態 (is_disable) です。クリックをスキップします。"); return False
             except Exception as e:
                 logger.warning(f"標準セレクタでの設定ボタンのクリックに失敗しました: {e}")
                 try:
-                    # 代替セレクタで試行
-                    alt_setting_button_selector = "//a[contains(text(), '設定する')]"
+                    # 定数を使用 (XPath)
+                    alt_setting_button_selector = self._BLOG_FORM_COUPON_SETTING_BTN_XPATH
                     alt_setting_button = self.page.locator(alt_setting_button_selector)
                     alt_setting_button.wait_for(state="visible", timeout=5000)
-                    
                     if "is_disable" not in (alt_setting_button.get_attribute("class") or ""):
                         alt_setting_button.click(timeout=5000)
                         logger.info("代替セレクタで「設定する」ボタンをクリックしました。")
                     else:
-                        logger.warning("代替セレクタでも「設定する」ボタンが無効状態です。")
-                        return False
-
+                        logger.warning("代替セレクタでも「設定する」ボタンが無効状態です。"); return False
                 except Exception as alt_e:
                     logger.error(f"代替方法での設定ボタンのクリックにも失敗しました: {alt_e}", exc_info=True)
-                    self.page.screenshot(path="coupon_setting_button_click_error.png")
-                    return False # 設定ボタンが押せない場合は失敗
+                    self.page.screenshot(path="coupon_setting_button_click_error.png"); return False
 
-            # モーダルが閉じるのを待つ
             logger.info("モーダルが閉じるのを待機します")
             try:
-                # モーダルが非表示になるのを待つ
                 for selector in reversed(coupon_modal_selectors): 
                     try:
-                        self.page.locator(selector).wait_for(state="hidden", timeout=10000) # 閉じるのを長めに待つ
-                        logger.info(f"クーポン選択モーダル ({selector}) が閉じました")
-                        break
+                        self.page.locator(selector).wait_for(state="hidden", timeout=10000)
+                        logger.info(f"クーポン選択モーダル ({selector}) が閉じました"); break
                     except TimeoutError:
-                         if selector == coupon_modal_selectors[0]: 
-                             logger.warning("クーポン選択モーダルが閉じるのを待機中にタイムアウトしました。")
-                    except Exception:
-                        pass 
-            except Exception as wait_close_e:
-                 logger.warning(f"モーダルが閉じるのを待機中にエラー: {wait_close_e}")
+                         if selector == coupon_modal_selectors[0]: logger.warning("クーポン選択モーダルが閉じるのを待機中にタイムアウトしました。")
+                    except Exception: pass 
+            except Exception as wait_close_e: logger.warning(f"モーダルが閉じるのを待機中にエラー: {wait_close_e}")
 
-            # 変更: クーポン選択が1つでも失敗したら最終的にFalseを返すようにする
             if not all_coupons_selected:
-                logger.error("クーポン選択に失敗したため、処理全体を失敗とします。")
-                return False
-
-            return True # 全て成功した場合のみTrue
+                logger.error("クーポン選択に失敗したため、処理全体を失敗とします。"); return False
+            return True
 
         except Exception as e:
             logger.error(f"クーポン選択処理全体でエラーが発生しました: {e}", exc_info=True) 
-            self.page.screenshot(path="coupon_selection_overall_error.png")
-            return False
+            self.page.screenshot(path="coupon_selection_overall_error.png"); return False
 
     def post_blog(self, blog_data):
-        """
-        ブログを投稿する
-        
-        Args:
-            blog_data (dict): ブログ投稿に必要なデータ
-                {
-                    'title': ブログタイトル,
-                    'content': ブログ本文,
-                    'stylist_id': スタイリストID,
-                    'image_paths': アップロードする画像パスのリスト,
-                    'coupon_names': 選択するクーポン名のリスト,
-                    'template': 追加するテンプレート内容
-                }
-                
-        Returns:
-            bool: 成功でTrue、失敗でFalse
-        """
+        """ブログを投稿する"""
         try:
-            # スタイリスト選択
-            if not self.select_stylist(blog_data['stylist_id']):
-                return False
+            if not self.select_stylist(blog_data['stylist_id']): return False
             
-            # カテゴリ選択（「おすすめスタイル」固定）
-            self.page.select_option("select#blogCategoryCd", "BL02")
+            # 定数を使用
+            self.page.select_option(self._BLOG_FORM_CATEGORY_SELECT, "BL02") # カテゴリIDは固定値のまま
+            self.page.fill(self._BLOG_FORM_TITLE_INPUT, blog_data['title'])
             
-            # タイトル入力
-            self.page.fill("input#blogTitle", blog_data['title'])
-            
-            # 本文とテンプレートを結合
             full_content = blog_data['content']
-            if blog_data.get('template'):
-                full_content += "\n\n" + blog_data['template']
+            if blog_data.get('template'): full_content += "\\n\\n" + blog_data['template']
+            if not self.set_rich_text_content(full_content): return False
             
-            # 本文をエディタに設定
-            if not self.set_rich_text_content(full_content):
-                return False
-            
-            # 画像のアップロード
             if blog_data.get('image_paths'):
                 for image_path in blog_data['image_paths']:
                     if not self.upload_image(image_path):
                         logger.warning(f"画像 '{image_path}' のアップロードに失敗しました。続行します。")
             
-            # クーポンの選択
             if blog_data.get('coupon_names') and len(blog_data['coupon_names']) > 0:
-                if not self.select_coupon(blog_data['coupon_names']):
-                    return False
+                if not self.select_coupon(blog_data['coupon_names']): return False
             
-            # 「確認する」ボタンをクリック
-            logger.info("「確認する」ボタン (#confirm) をクリックします")
+            # 定数を使用
+            logger.info(f"「確認する」ボタン ({self._BLOG_CONFIRM_BTN}) をクリックします")
             try:
-                confirm_button = self.page.locator("a#confirm")
+                confirm_button = self.page.locator(self._BLOG_CONFIRM_BTN)
                 confirm_button.wait_for(state="visible", timeout=10000) 
                 confirm_button.click(timeout=5000)
                 logger.info("「確認する」ボタンをクリックしました")
             except Exception as confirm_err:
                  logger.error(f"「確認する」ボタンのクリックに失敗: {confirm_err}", exc_info=True)
-                 self.page.screenshot(path="confirm_button_click_error.png")
-                 return False
+                 self.page.screenshot(path="confirm_button_click_error.png"); return False
 
-            # --- 変更箇所: 「登録・未反映にする」ボタンの処理 --- 
-            # 確認ページ（「登録・未反映にする」ボタン）の表示を待機
-            unreflect_button_selector = "a#unReflect"
+            # 定数を使用
+            unreflect_button_selector = self._BLOG_UNREFLECT_BTN
             logger.info(f"確認ページ（「登録・未反映にする」ボタン {unreflect_button_selector}）の表示を待機します") 
             try:
-                self.page.wait_for_selector(
-                    unreflect_button_selector, 
-                    state="visible", 
-                    timeout=60000
-                )
+                self.page.wait_for_selector(unreflect_button_selector, state="visible", timeout=60000)
                 logger.info("確認ページの表示（「登録・未反映にする」ボタンの存在）を確認しました")
             except TimeoutError:
                 logger.error("確認ページの表示がタイムアウトしました (「登録・未反映にする」ボタンが見つかりません)")
-                self.page.screenshot(path="unreflect_page_timeout.png") # スクショ追加
-                return False
+                self.page.screenshot(path="unreflect_page_timeout.png"); return False
 
-            # ロボット認証が検出されたら中断
             if self.is_robot_detection_present():
-                logger.error("確認ページでロボット認証が検出されました。処理を中断します。")
-                return False
+                logger.error("確認ページでロボット認証が検出されました。処理を中断します。"); return False
                 
-            # 「登録・未反映にする」ボタンをクリック
             logger.info(f"「登録・未反映にする」ボタン ({unreflect_button_selector}) をクリックします")
             try:
                  unreflect_button = self.page.locator(unreflect_button_selector)
@@ -1132,55 +828,71 @@ class SalonBoardPoster:
                  logger.info("「登録・未反映にする」ボタンをクリックしました")
             except Exception as unreflect_err:
                  logger.error(f"「登録・未反映にする」ボタンのクリックに失敗: {unreflect_err}", exc_info=True)
-                 self.page.screenshot(path="unreflect_button_click_error.png")
-                 return False
+                 self.page.screenshot(path="unreflect_button_click_error.png"); return False
 
-            # --- 追加箇所: 「ブログ一覧へ」ボタンの処理 --- 
-            back_button_selector = "a#back"
+            # 定数を使用
+            back_button_selector = self._BLOG_BACK_BTN
             logger.info(f"「ブログ一覧へ」ボタン ({back_button_selector}) を待機し、クリックします")
             try:
                 back_button = self.page.locator(back_button_selector)
-                back_button.wait_for(state="visible", timeout=30000) # 少し待つ
+                back_button.wait_for(state="visible", timeout=30000)
                 logger.info("「ブログ一覧へ」ボタンが表示されました。クリックします。")
                 back_button.click(timeout=10000)
                 logger.info("「ブログ一覧へ」ボタンをクリックしました。")
             except Exception as back_err:
-                # このボタンは必須ではないかもしれないので、エラーは警告レベルに留める
                 logger.warning(f"「ブログ一覧へ」ボタンのクリックに失敗しました（処理は続行される可能性があります）: {back_err}", exc_info=True)
                 self.page.screenshot(path="back_button_click_error.png")
-                # return False # ここでは処理を止めない
-            # --- 追加箇所 終了 ---
             
-            # 完了（ブログ一覧ページへの遷移など）を待機
-            # 仮にブログ一覧ページに戻るとして、再度「新規投稿」ボタンが表示されるのを待つ
-            # 実際の挙動に合わせて変更が必要な場合あり
-            logger.info("ブログ一覧ページへの遷移（例: #newPosts ボタンの再表示）を待機します") 
+            # 定数を使用 (完了確認は新規投稿ボタンの再表示で行う)
+            logger.info(f"ブログ一覧ページへの遷移（例: {self._NAVI_NEW_POST} ボタンの再表示）を待機します") 
             try:
-                self.page.wait_for_selector("#newPosts", state="visible", timeout=60000)
+                self.page.wait_for_selector(self._NAVI_NEW_POST, state="visible", timeout=60000)
                 logger.info("ブログ一覧ページへの遷移（または完了状態）を確認しました")
             except TimeoutError:
                 logger.warning("ブログ一覧ページへの遷移確認がタイムアウトしました。成功した可能性もあります。")
                 self.page.screenshot(path="unreflect_complete_timeout.png")
-                # タイムアウトしても成功とみなす場合があるため、ここでは return False しない
             
-            # ロボット認証が再度検出されたら念のため報告 (通常は遷移後)
-            if self.is_robot_detection_present():
-                logger.warning("処理完了後（？）にロボット認証が検出されました。")
-                # return False # 完了はしている可能性があるので中断しない
+            if self.is_robot_detection_present(): logger.warning("処理完了後（？）にロボット認証が検出されました。")
 
-            # --- 変更箇所 終了 --- 
-                
             logger.info("ブログの「登録・未反映」処理が完了しました")
             return True
             
         except Exception as e:
-            logger.error(f"ブログ投稿処理（未反映登録）中にエラーが発生しました: {e}", exc_info=True) # エラーログ修正
-            # 失敗時のスクリーンショット (メソッドの最後で撮るよりここで撮る方が状況が分かりやすい)
-            try:
-                self.page.screenshot(path="post_blog_unreflect_error.png")
-            except Exception as ss_err:
-                 logger.error(f"エラー時のスクリーンショット撮影に失敗: {ss_err}")
+            logger.error(f"ブログ投稿処理（未反映登録）中にエラーが発生しました: {e}", exc_info=True)
+            try: self.page.screenshot(path="post_blog_unreflect_error.png")
+            except Exception as ss_err: logger.error(f"エラー時のスクリーンショット撮影に失敗: {ss_err}")
             return False
+
+    # --- Private Step Methods for execute_post Flow ---
+
+    def _step_login(self, user_id, password):
+        """Execute post step: Perform login."""
+        logger.info("ステップ1/3: サロンボードへのログインを開始します。")
+        if not self.login(user_id, password):
+            logger.error("ログインステップで失敗しました。処理を中断します。")
+            return False
+        logger.info("ステップ1/3: ログイン成功。")
+        return True
+
+    def _step_navigate_to_blog_form(self):
+        """Execute post step: Navigate to the blog posting form."""
+        logger.info("ステップ2/3: ブログ投稿ページへの移動を開始します。")
+        if not self.navigate_to_blog_post_page():
+            logger.error("ブログ投稿ページへの移動ステップで失敗しました。処理を中断します。")
+            return False
+        logger.info("ステップ2/3: ブログ投稿ページへの移動成功。")
+        return True
+
+    def _step_post_blog_data(self, blog_data):
+        """Execute post step: Fill form and post blog data."""
+        logger.info("ステップ3/3: ブログデータの入力と投稿（未反映登録）を開始します。")
+        if not self.post_blog(blog_data):
+            logger.error("ブログデータの入力・投稿ステップで失敗しました。")
+            return False
+        logger.info("ステップ3/3: ブログデータの入力・投稿（未反映登録）成功。")
+        return True
+
+    # --- Public Method ---
 
     def execute_post(self, user_id, password, blog_data):
         """
@@ -1195,29 +907,46 @@ class SalonBoardPoster:
             bool: 成功でTrue、失敗でFalse
         """
         success = False
-        
+        start_time = time.time()
+        logger.info("=== Salon Boardブログ投稿処理 開始 ===")
         try:
-            # ブラウザを起動
-            if not self.start():
+            # --- 1. ブラウザ起動 ---
+            if not self.start(): 
+                # start内でエラーログ出力済み
+                return False 
+            
+            # --- 2. ログイン実行 ---
+            if not self._step_login(user_id, password):
+                # _step_login内でエラーログ出力済み
+                return False 
+            
+            # --- 3. ブログ投稿ページへ移動 ---
+            if not self._step_navigate_to_blog_form():
+                # _step_navigate_to_blog_form内でエラーログ出力済み
+                return False 
+            
+            # --- 4. ブログデータ入力・投稿 --- 
+            if not self._step_post_blog_data(blog_data):
+                # _step_post_blog_data内でエラーログ出力済み
                 return False
             
-            # サロンボードにログイン
-            if not self.login(user_id, password):
-                return False
-            
-            # ブログ投稿ページに移動
-            if not self.navigate_to_blog_post_page():
-                return False
-            
-            # ブログを投稿
-            success = self.post_blog(blog_data)
+            # 全てのステップが成功した場合
+            success = True
+            logger.info("=== Salon Boardブログ投稿処理 正常終了 ===")
             
         except Exception as e:
-            logger.error(f"ブログ投稿処理全体でエラーが発生しました: {e}")
+            #予期せぬエラーのキャッチ
+            logger.error(f"ブログ投稿処理の予期せぬエラー: {e}", exc_info=True)
             success = False
-            
+            # エラー発生時にもスクリーンショットを試みる
+            if self.page:
+                try: self.page.screenshot(path="execute_post_unexpected_error.png")
+                except Exception as ss_err: logger.error(f"予期せぬエラー時のスクリーンショット撮影失敗: {ss_err}")
         finally:
-            # ブラウザを終了
+            # --- 5. ブラウザ終了 ---
+            logger.info("ブラウザを終了します。")
             self.close()
+            end_time = time.time()
+            logger.info(f"処理時間: {end_time - start_time:.2f} 秒")
             
         return success 
