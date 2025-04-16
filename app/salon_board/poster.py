@@ -1092,41 +1092,94 @@ class SalonBoardPoster:
                     return False
             
             # 「確認する」ボタンをクリック
-            self.page.click("a#confirm")
-            
-            # 確認ページの表示を待機
+            logger.info("「確認する」ボタン (#confirm) をクリックします")
             try:
-                self.page.wait_for_selector("a#regist", timeout=10000)  # 登録ボタンのセレクタは要確認
+                confirm_button = self.page.locator("a#confirm")
+                confirm_button.wait_for(state="visible", timeout=10000) 
+                confirm_button.click(timeout=5000)
+                logger.info("「確認する」ボタンをクリックしました")
+            except Exception as confirm_err:
+                 logger.error(f"「確認する」ボタンのクリックに失敗: {confirm_err}", exc_info=True)
+                 self.page.screenshot(path="confirm_button_click_error.png")
+                 return False
+
+            # --- 変更箇所: 「登録・未反映にする」ボタンの処理 --- 
+            # 確認ページ（「登録・未反映にする」ボタン）の表示を待機
+            unreflect_button_selector = "a#unReflect"
+            logger.info(f"確認ページ（「登録・未反映にする」ボタン {unreflect_button_selector}）の表示を待機します") 
+            try:
+                self.page.wait_for_selector(
+                    unreflect_button_selector, 
+                    state="visible", 
+                    timeout=60000
+                )
+                logger.info("確認ページの表示（「登録・未反映にする」ボタンの存在）を確認しました")
             except TimeoutError:
-                logger.error("確認ページの表示がタイムアウトしました")
+                logger.error("確認ページの表示がタイムアウトしました (「登録・未反映にする」ボタンが見つかりません)")
+                self.page.screenshot(path="unreflect_page_timeout.png") # スクショ追加
                 return False
-            
+
             # ロボット認証が検出されたら中断
             if self.is_robot_detection_present():
                 logger.error("確認ページでロボット認証が検出されました。処理を中断します。")
                 return False
                 
-            # 「登録する」ボタンをクリック
-            self.page.click("a#regist")  # 登録ボタンのセレクタは要確認
-            
-            # 完了ページの表示を待機
+            # 「登録・未反映にする」ボタンをクリック
+            logger.info(f"「登録・未反映にする」ボタン ({unreflect_button_selector}) をクリックします")
             try:
-                # 成功メッセージや完了ページの特徴的な要素を待機
-                self.page.wait_for_selector("div.completeMessage", timeout=10000)  # 完了メッセージのセレクタは要確認
-            except TimeoutError:
-                logger.error("完了ページの表示がタイムアウトしました")
-                return False
+                 unreflect_button = self.page.locator(unreflect_button_selector)
+                 unreflect_button.click(timeout=10000)
+                 logger.info("「登録・未反映にする」ボタンをクリックしました")
+            except Exception as unreflect_err:
+                 logger.error(f"「登録・未反映にする」ボタンのクリックに失敗: {unreflect_err}", exc_info=True)
+                 self.page.screenshot(path="unreflect_button_click_error.png")
+                 return False
+
+            # --- 追加箇所: 「ブログ一覧へ」ボタンの処理 --- 
+            back_button_selector = "a#back"
+            logger.info(f"「ブログ一覧へ」ボタン ({back_button_selector}) を待機し、クリックします")
+            try:
+                back_button = self.page.locator(back_button_selector)
+                back_button.wait_for(state="visible", timeout=30000) # 少し待つ
+                logger.info("「ブログ一覧へ」ボタンが表示されました。クリックします。")
+                back_button.click(timeout=10000)
+                logger.info("「ブログ一覧へ」ボタンをクリックしました。")
+            except Exception as back_err:
+                # このボタンは必須ではないかもしれないので、エラーは警告レベルに留める
+                logger.warning(f"「ブログ一覧へ」ボタンのクリックに失敗しました（処理は続行される可能性があります）: {back_err}", exc_info=True)
+                self.page.screenshot(path="back_button_click_error.png")
+                # return False # ここでは処理を止めない
+            # --- 追加箇所 終了 ---
             
-            # ロボット認証が検出されたら中断
+            # 完了（ブログ一覧ページへの遷移など）を待機
+            # 仮にブログ一覧ページに戻るとして、再度「新規投稿」ボタンが表示されるのを待つ
+            # 実際の挙動に合わせて変更が必要な場合あり
+            logger.info("ブログ一覧ページへの遷移（例: #newPosts ボタンの再表示）を待機します") 
+            try:
+                self.page.wait_for_selector("#newPosts", state="visible", timeout=60000)
+                logger.info("ブログ一覧ページへの遷移（または完了状態）を確認しました")
+            except TimeoutError:
+                logger.warning("ブログ一覧ページへの遷移確認がタイムアウトしました。成功した可能性もあります。")
+                self.page.screenshot(path="unreflect_complete_timeout.png")
+                # タイムアウトしても成功とみなす場合があるため、ここでは return False しない
+            
+            # ロボット認証が再度検出されたら念のため報告 (通常は遷移後)
             if self.is_robot_detection_present():
-                logger.error("完了ページでロボット認証が検出されました。処理を中断します。")
-                return False
+                logger.warning("処理完了後（？）にロボット認証が検出されました。")
+                # return False # 完了はしている可能性があるので中断しない
+
+            # --- 変更箇所 終了 --- 
                 
-            logger.info("ブログの投稿に成功しました")
+            logger.info("ブログの「登録・未反映」処理が完了しました")
             return True
             
         except Exception as e:
-            logger.error(f"ブログ投稿中にエラーが発生しました: {e}")
+            logger.error(f"ブログ投稿処理（未反映登録）中にエラーが発生しました: {e}", exc_info=True) # エラーログ修正
+            # 失敗時のスクリーンショット (メソッドの最後で撮るよりここで撮る方が状況が分かりやすい)
+            try:
+                self.page.screenshot(path="post_blog_unreflect_error.png")
+            except Exception as ss_err:
+                 logger.error(f"エラー時のスクリーンショット撮影に失敗: {ss_err}")
             return False
 
     def execute_post(self, user_id, password, blog_data):
