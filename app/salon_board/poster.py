@@ -2,6 +2,8 @@ import os
 import time
 import logging
 from playwright.sync_api import sync_playwright, Page, Browser, TimeoutError
+import re
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -22,34 +24,91 @@ class SalonBoardPoster:
         self.browser = None
         self.page = None
         self.login_url = "https://salonboard.com/login/"
-        self.default_timeout = 120000  # デフォルトのタイムアウトを120秒に設定
+        self.default_timeout = 180000  # デフォルトのタイムアウトを180秒に設定
+        self.max_retries = 3  # 追加: 最大再試行回数を設定
 
     def start(self):
-        """Playwrightとブラウザを起動"""
+        """Playwrightとブラウザを起動（自動化隠蔽強化版）"""
         try:
             self.playwright = sync_playwright().start()
             
-            # macOSの場合は特別なオプションを追加してブラウザを起動
+            # 自動化回避のためのオプションを強化
             launch_args = [
-                "--disable-dev-shm-usage",  # 共有メモリ使用を無効化（安定性向上）
-                "--disable-gpu",            # GPUハードウェアアクセラレーションを無効化
-                "--no-sandbox",             # サンドボックスを無効化（必要に応じて）
-                "--disable-setuid-sandbox", # setuidサンドボックスを無効化
+                "--disable-blink-features=AutomationControlled",  # 重要: 自動化検出を回避
+                "--disable-infobars",                         # 「自動テスト...」のバーを非表示
+                "--disable-extensions",
+                "--disable-dev-shm-usage", 
+                "--disable-gpu",
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                # "--start-maximized" # ヘッドレスでは不要な場合あり
+                # "--window-size=1920,1080" # viewport設定でカバー
             ]
             
+            # ユーザーデータディレクトリを指定して永続コンテキストを使うことも検討できるが、
+            # まずは通常のコンテキストで隠蔽を試みる
+            # self.browser = self.playwright.chromium.launch_persistent_context(...) 
+
             self.browser = self.playwright.chromium.launch(
                 headless=self.headless,
-                slow_mo=self.slow_mo,
+                slow_mo=self.slow_mo, # slow_mo は検知回避に役立つ場合がある
                 args=launch_args
             )
             
-            self.page = self.browser.new_page()
-            self.page.set_default_timeout(self.default_timeout)  # ページのタイムアウトを設定
-            logger.info(f"ブラウザを起動しました。タイムアウト: {self.default_timeout}ms, スロー設定: {self.slow_mo}ms")
+            # 一般的なブラウザの特性を持つコンテキストを作成
+            context = self.browser.new_context(
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36", # より新しいバージョンに更新
+                viewport={"width": 1920, "height": 1080},
+                locale="ja-JP",
+                timezone_id="Asia/Tokyo",
+                # accept_downloads=True, # 必要に応じて
+                # geolocation={"longitude": 139.6917, "latitude": 35.6895}, # 必要に応じて
+                permissions=['geolocation'] # 必要に応じて通知などの権限も設定
+            )
+            
+            # JavaScript実行前の初期設定（自動化を隠す）
+            # navigator.webdriver を偽装
+            context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+            """)
+            # その他の検知ポイントを偽装 (例: プラグイン、言語など)
+            context.add_init_script("""
+                // プラグイン情報の偽装
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3], // ダミーのプラグイン配列
+                });
+                // 言語設定の偽装 (コンテキスト設定と合わせる)
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['ja-JP', 'ja'],
+                });
+                // WebGL ベンダーとレンダラー情報 (一般的なものに偽装)
+                try {
+                    const getParameter = WebGLRenderingContext.prototype.getParameter;
+                    WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                        // UNMASKED_VENDOR_WEBGL と UNMASKED_RENDERER_WEBGL を偽装
+                        if (parameter === 37445) { // VENDOR
+                            return 'Google Inc. (Intel)';
+                        }
+                        if (parameter === 37446) { // RENDERER
+                            return 'ANGLE (Intel, Intel(R) Iris(TM) Plus Graphics 640, OpenGL 4.1)';
+                        }
+                        return getParameter.call(this, parameter);
+                    };
+                } catch (e) {
+                    console.error('WebGL spoofing failed:', e);
+                }
+            """)
+
+            self.page = context.new_page()
+            self.page.set_default_timeout(self.default_timeout)
+            
+            logger.info(f"ブラウザを起動しました（自動化隠蔽強化）。タイムアウト: {self.default_timeout}ms, スロー設定: {self.slow_mo}ms")
             
             return True
         except Exception as e:
-            logger.error(f"ブラウザの起動に失敗しました: {e}")
+            logger.error(f"ブラウザの起動に失敗しました: {e}", exc_info=True)
             self.close()
             return False
 
@@ -462,44 +521,176 @@ class SalonBoardPoster:
         Returns:
             bool: 成功でTrue、失敗でFalse
         """
-        try:
-            # 「掲載管理」ボタンをクリック
-            self.page.click("#globalNavi > ul.common-CLPcommon__globalNavi > li:nth-child(2) > a")
-            
-            # ロボット認証が検出されたら中断
-            if self.is_robot_detection_present():
-                logger.error("掲載管理ページでロボット認証が検出されました。処理を中断します。")
-                return False
-            
-            # 「ブログ」ボタンをクリック
-            self.page.click("#cmsForm > div > div > ul > li:nth-child(9) > a")
-            
-            # ロボット認証が検出されたら中断
-            if self.is_robot_detection_present():
-                logger.error("ブログ管理ページでロボット認証が検出されました。処理を中断します。")
-                return False
-            
-            # 「新規投稿」ボタンをクリック
-            self.page.click("#newPosts")
-            
-            # 投稿フォームの読み込みを待機
+        for attempt in range(self.max_retries):
             try:
-                self.page.wait_for_selector("select#stylistId", timeout=10000)
-            except TimeoutError:
-                logger.error("ブログ投稿フォームの表示がタイムアウトしました")
-                return False
-            
-            # ロボット認証が検出されたら中断
-            if self.is_robot_detection_present():
-                logger.error("新規投稿ページでロボット認証が検出されました。処理を中断します。")
-                return False
+                logger.info(f"ブログ投稿ページへの移動を試行中... (試行 {attempt+1}/{self.max_retries})")
                 
-            logger.info("ブログ投稿ページへの移動に成功しました")
-            return True
-            
-        except Exception as e:
-            logger.error(f"ブログ投稿ページへの移動中にエラーが発生しました: {e}")
-            return False
+                # 「掲載管理」ボタンのセレクタ
+                keisai_kanri_selector = "#globalNavi > ul.common-CLPcommon__globalNavi > li:nth-child(2) > a"
+
+                # --- 「掲載管理」ボタンクリック処理の改善 ---
+                logger.info(f"「掲載管理」ボタン ({keisai_kanri_selector}) を待機し、クリックします")
+                try:
+                    # ボタンが表示され、有効になるまで待機 (タイムアウトを少し長めに設定)
+                    self.page.wait_for_selector(
+                        keisai_kanri_selector, 
+                        state="visible", 
+                        timeout=60000 # ダッシュボード読み込み完了まで待つため長めに
+                    )
+                    logger.info("「掲載管理」ボタンが表示されました")
+
+                    # Locatorを使用してクリック (より推奨される方法)
+                    keisai_kanri_button = self.page.locator(keisai_kanri_selector)
+                    
+                    # クリック前に要素を確実に表示させる
+                    keisai_kanri_button.scroll_into_view_if_needed()
+                    time.sleep(1) # スクロールや描画の安定待ち
+
+                    # クリック実行
+                    keisai_kanri_button.click(timeout=10000) # クリック自体のタイムアウト
+                    logger.info("「掲載管理」ボタンをクリックしました (Locator)")
+
+                except Exception as click_err:
+                    logger.warning(f"Locatorによる「掲載管理」ボタンのクリックに失敗: {click_err}。JavaScriptでのクリックを試みます。")
+                    try:
+                        # JavaScriptでクリックするフォールバック
+                        self.page.evaluate(f"document.querySelector('{keisai_kanri_selector}').click()")
+                        logger.info("「掲載管理」ボタンをクリックしました (JavaScript)")
+                    except Exception as js_click_err:
+                        logger.error(f"JavaScriptによる「掲載管理」ボタンのクリックにも失敗: {js_click_err}")
+                        # エラーが続く場合は再試行ループへ
+                        if attempt < self.max_retries - 1:
+                            logger.warning(f"「掲載管理」ボタンのクリックに失敗しました。再試行します... ({attempt+1}/{self.max_retries})")
+                            time.sleep(3) # 再試行前に少し待つ
+                            continue
+                        else:
+                            self.page.screenshot(path="keisai_kanri_click_error.png")
+                            return False
+                # --- 「掲載管理」ボタンクリック処理の改善 終了 ---
+
+                # ネットワークアクティビティが落ち着くまで待機 (クリック後のページ遷移完了を待つ)
+                logger.info("掲載管理ページへの遷移（ネットワークアイドル）を待機します")
+                self.page.wait_for_load_state("networkidle", timeout=60000) 
+                logger.info("掲載管理ページの読み込みが完了しました")
+
+                # ロボット認証が検出されたら中断
+                if self.is_robot_detection_present():
+                    logger.error("掲載管理ページでロボット認証が検出されました。処理を中断します。")
+                    return False
+                
+                # 「ブログ」ボタンのセレクタ
+                blog_button_selector = "#cmsForm > div > div > ul > li:nth-child(9) > a"
+                
+                # 「ブログ」ボタンをクリック
+                logger.info(f"「ブログ」ボタン ({blog_button_selector}) を待機し、クリックします")
+                try:
+                    self.page.wait_for_selector(
+                        blog_button_selector, 
+                        state="visible", 
+                        timeout=30000
+                    )
+                    # Locator使用を推奨するが一貫性のためpage.clickでも可
+                    self.page.locator(blog_button_selector).click(timeout=10000)
+                    logger.info("「ブログ」ボタンをクリックしました")
+
+                except Exception as blog_click_err:
+                     logger.error(f"「ブログ」ボタンのクリックに失敗: {blog_click_err}")
+                     if attempt < self.max_retries - 1:
+                         logger.warning(f"「ブログ」ボタンのクリックに失敗しました。再試行します... ({attempt+1}/{self.max_retries})")
+                         time.sleep(3)
+                         continue
+                     else:
+                         self.page.screenshot(path="blog_button_click_error.png")
+                         return False
+
+                # ネットワークアクティビティが落ち着くまで待機
+                logger.info("ブログ管理ページへの遷移（ネットワークアイドル）を待機します")
+                self.page.wait_for_load_state("networkidle", timeout=60000)
+                logger.info("ブログ管理ページの読み込みが完了しました")
+                
+                # ロボット認証が検出されたら中断
+                if self.is_robot_detection_present():
+                    logger.error("ブログ管理ページでロボット認証が検出されました。処理を中断します。")
+                    return False
+                
+                # 「新規投稿」ボタンのセレクタ
+                new_post_button_selector = "#newPosts"
+
+                # 「新規投稿」ボタンをクリック
+                logger.info(f"「新規投稿」ボタン ({new_post_button_selector}) を待機し、クリックします")
+                try:
+                    self.page.wait_for_selector(new_post_button_selector, state="visible", timeout=30000)
+                    self.page.locator(new_post_button_selector).click(timeout=10000)
+                    logger.info("「新規投稿」ボタンをクリックしました")
+
+                except Exception as new_post_click_err:
+                    logger.error(f"「新規投稿」ボタンのクリックに失敗: {new_post_click_err}")
+                    if attempt < self.max_retries - 1:
+                         logger.warning(f"「新規投稿」ボタンのクリックに失敗しました。再試行します... ({attempt+1}/{self.max_retries})")
+                         time.sleep(3)
+                         continue
+                    else:
+                         self.page.screenshot(path="new_post_button_click_error.png")
+                         return False
+
+                # ネットワークアクティビティが落ち着くまで待機
+                logger.info("新規投稿ページへの遷移（ネットワークアイドル）を待機します")
+                self.page.wait_for_load_state("networkidle", timeout=60000)
+                logger.info("新規投稿ページの読み込みが完了しました")
+                
+                # 投稿フォームの主要要素（スタイリスト選択）が表示されるまで待機
+                logger.info("ブログ投稿フォームの主要素 (select#stylistId) を待機します")
+                try:
+                    self.page.wait_for_selector("select#stylistId", state="visible", timeout=60000)
+                    logger.info("ブログ投稿フォームの表示を確認しました")
+                except TimeoutError:
+                    # 最終試行でなければ再試行
+                    if attempt < self.max_retries - 1:
+                        logger.warning(f"ブログ投稿フォームの表示がタイムアウトしました。再試行します... ({attempt+1}/{self.max_retries})")
+                        # 念のためダッシュボードに戻って再試行
+                        try:
+                            logger.info("ダッシュボードに戻ります...")
+                            self.page.goto("https://salonboard.com/main/", wait_until="networkidle", timeout=60000)
+                        except Exception as goto_err:
+                            logger.warning(f"ダッシュボードへの移動に失敗: {goto_err}")
+                            time.sleep(5) # 失敗したら少し長めに待つ
+                        continue
+                    else:
+                        logger.error(f"ブログ投稿フォームの表示が{self.max_retries}回タイムアウトしました。処理を中断します。")
+                        # 現在の状態をスクリーンショット
+                        self.page.screenshot(path="blog_form_timeout.png")
+                        return False
+                
+                # ロボット認証が検出されたら中断
+                if self.is_robot_detection_present():
+                    logger.error("新規投稿ページでロボット認証が検出されました。処理を中断します。")
+                    return False
+                    
+                logger.info("ブログ投稿ページへの移動に成功しました")
+                return True # 成功したらループを抜ける
+                
+            except Exception as e:
+                # 最終試行でなければ再試行
+                if attempt < self.max_retries - 1:
+                    logger.warning(f"ブログ投稿ページへの移動中に予期せぬエラーが発生しました: {e}。再試行します... ({attempt+1}/{self.max_retries})", exc_info=True)
+                    time.sleep(5)  # 少し長めに待機してから再試行
+                    # エラー発生時はダッシュボードに戻ることを試みる
+                    try:
+                        logger.info("エラー発生のため、ダッシュボードに戻ります...")
+                        self.page.goto("https://salonboard.com/main/", wait_until="networkidle", timeout=60000)
+                    except Exception as goto_err:
+                        logger.warning(f"エラー後のダッシュボードへの移動に失敗: {goto_err}")
+                        time.sleep(5)
+                    continue
+                else:
+                    logger.error(f"ブログ投稿ページへの移動中に{self.max_retries}回エラーが発生しました: {e}", exc_info=True)
+                    # 現在の状態をスクリーンショット
+                    self.page.screenshot(path="blog_navigation_error.png")
+                    return False
+        
+        # ループが完了しても成功しなかった場合 (通常はループ内でreturnされるはず)
+        logger.error("最大再試行回数に達しましたが、ブログ投稿ページへの移動に失敗しました。")
+        return False
 
     def set_rich_text_content(self, content):
         """
@@ -650,7 +841,7 @@ class SalonBoardPoster:
 
     def select_coupon(self, coupon_names):
         """
-        クーポンを選択する
+        クーポンを選択する (filterメソッド使用版)
         
         Args:
             coupon_names (list): 選択するクーポン名のリスト
@@ -659,73 +850,196 @@ class SalonBoardPoster:
             bool: 成功でTrue、失敗でFalse
         """
         try:
-            # クーポン選択ボタンをクリック
-            logger.info("クーポン選択ボタンをクリックします")
-            self.page.click("a.jsc_SB_modal_trigger")
-            
-            # クーポン選択モーダルの表示を待機
+            coupon_button_selector = "a.jsc_SB_modal_trigger"
+            coupon_modal_selectors = ["div#couponWrap", "#couponArea"] # メインと代替セレクタ
+
+            # --- クーポン選択ボタン クリック処理 (強化) ---
+            logger.info(f"クーポン選択ボタン ({coupon_button_selector}) を待機します")
             try:
-                logger.info("クーポン選択モーダルの表示を待機します")
-                self.page.wait_for_selector("div#couponWrap", timeout=10000)
-                if not self.page.is_visible("div#couponWrap"):
-                    # 代替セレクタで再試行
-                    logger.info("代替セレクタでクーポンモーダルの表示を確認します")
-                    self.page.wait_for_selector("#couponArea", timeout=5000)
+                coupon_button = self.page.locator(coupon_button_selector)
+                coupon_button.wait_for(state="visible", timeout=10000)
+                # クリック可能になるまで待機（例: enabled状態を待つ）
+                # coupon_button.wait_for(state="enabled", timeout=5000) # 有効状態を待つ場合
             except TimeoutError:
-                logger.error("クーポン選択モーダルの表示がタイムアウトしました")
+                logger.error(f"クーポン選択ボタン ({coupon_button_selector}) が表示されませんでした")
+                self.page.screenshot(path="coupon_button_not_visible.png")
                 return False
-            
-            # 各クーポンを選択
+
+            logger.info("クーポン選択ボタンをクリックします")
+            clicked = False
+            try:
+                coupon_button.scroll_into_view_if_needed()
+                time.sleep(0.5)
+                coupon_button.click(timeout=5000)
+                clicked = True
+                logger.info("Playwrightのclickでクーポン選択ボタンをクリックしました")
+            except Exception as e:
+                logger.warning(f"Playwrightのclick失敗: {e}。他の方法を試みます。")
+                try:
+                    logger.info("JavaScript click を試行")
+                    coupon_button.evaluate("node => node.click()")
+                    clicked = True
+                    logger.info("JavaScript clickでクーポン選択ボタンをクリックしました")
+                except Exception as js_e:
+                    logger.warning(f"JavaScript click失敗: {js_e}。dispatch_eventを試みます。")
+                    try:
+                        logger.info("dispatch_event('click') を試行")
+                        coupon_button.dispatch_event('click')
+                        clicked = True
+                        logger.info("dispatch_event('click')でクーポン選択ボタンをクリックしました")
+                    except Exception as dispatch_e:
+                         logger.error(f"全てのクリック方法でクーポン選択ボタンのクリックに失敗: {dispatch_e}")
+                         self.page.screenshot(path="coupon_button_click_failed.png")
+                         return False
+
+            if not clicked:
+                 logger.error("クーポン選択ボタンをクリックできませんでした。")
+                 return False
+
+            # --- モーダル表示待機 (変更なし部分も含む) ---
+            modal_visible = False
+            logger.info(f"クーポン選択モーダルの表示を待機します (セレクタ: {coupon_modal_selectors})")
+            start_time = time.time()
+            while time.time() - start_time < self.default_timeout / 1000: # 設定されたタイムアウト時間まで待つ
+                for selector in coupon_modal_selectors:
+                    try:
+                        # ページ上に存在し、かつ表示されているかを確認
+                        if self.page.locator(selector).is_visible(timeout=1000): # 短いタイムアウトでチェック
+                             logger.info(f"クーポン選択モーダル ({selector}) が表示されました")
+                             modal_visible = True
+                             break # モーダルが見つかったらループを抜ける
+                    except Exception:
+                        # is_visible でエラーが出ても無視して次のセレクタへ
+                        continue
+                if modal_visible:
+                    break # モーダルが見つかったら待機ループも抜ける
+                time.sleep(1) # 1秒待って再試行
+
+            if not modal_visible:
+                 logger.error(f"クーポン選択モーダルの表示がタイムアウトしました ({self.default_timeout}ms)")
+                 self.page.screenshot(path="coupon_modal_timeout_screenshot.png")
+                 return False
+
+            # --- クーポン選択処理 (filterメソッド使用) ---
+            logger.info("クーポン選択処理を開始します (filter使用)")
+            all_coupons_selected = True
             for coupon_name in coupon_names:
                 logger.info(f"クーポン '{coupon_name}' を選択します")
+                found_and_clicked = False
+                cleaned_coupon_name = coupon_name.strip()
+                if not cleaned_coupon_name:
+                    logger.warning("空のクーポン名のためスキップ")
+                    continue
+
                 try:
-                    # より柔軟な方法でクーポンを探してチェック
-                    # まず、クーポン名を含むテキスト要素を探す
-                    coupon_elements = self.page.query_selector_all("p.couponText")
-                    found = False
-                    
-                    for elem in coupon_elements:
-                        text = elem.inner_text()
-                        if coupon_name in text:
-                            # クーポン名が見つかったら、親要素を遡ってチェックボックスを見つける
-                            logger.info(f"クーポン '{coupon_name}' が見つかりました: {text}")
-                            # 関連するチェックボックスをクリック
-                            closest_label = elem.evaluate("node => node.closest('label')")
-                            if closest_label:
-                                closest_label.click()
-                                found = True
-                                logger.info(f"クーポン '{coupon_name}' を選択しました")
-                                break
-                    
-                    if not found:
-                        # 代替的な方法: XPathを使用してテキストを部分一致で検索
-                        logger.info(f"代替方法でクーポン '{coupon_name}' を検索します")
-                        self.page.click(f"//p[contains(text(), '{coupon_name}')]/ancestor::label")
-                        logger.info(f"代替方法でクーポン '{coupon_name}' を選択しました")
-                        
+                    # モーダル内のすべてのラベルを取得
+                    all_labels = self.page.locator(f"{coupon_modal_selectors[0]} label") # モーダルが表示されている前提
+                    logger.debug(f"モーダル内のラベル候補数: {all_labels.count()}")
+
+                    # 各ラベルをループしてテキストを比較
+                    for i in range(all_labels.count()):
+                        label = all_labels.nth(i)
+                        # ラベル内のp.couponText要素を取得
+                        coupon_text_element = label.locator("p.couponText")
+
+                        if coupon_text_element.count() > 0:
+                            # テキスト内容を取得して比較 (前後の空白無視、部分一致、大文字小文字無視)
+                            actual_text = coupon_text_element.first.inner_text().strip()
+                            logger.debug(f"ラベル {i} のテキスト: '{actual_text}'")
+                            if cleaned_coupon_name.lower() in actual_text.lower():
+                                logger.info(f"クーポン '{cleaned_coupon_name}' がテキスト '{actual_text}' にマッチしました。クリックを試みます。")
+                                try:
+                                    label.scroll_into_view_if_needed()
+                                    time.sleep(0.5)
+                                    label.click(timeout=5000)
+                                    found_and_clicked = True
+                                    logger.info(f"クーポン '{cleaned_coupon_name}' をクリックしました。")
+                                    time.sleep(0.3)
+                                    break # マッチしてクリックしたらこのクーポンのループは終了
+                                except Exception as click_err:
+                                     logger.warning(f"クーポン '{cleaned_coupon_name}' のクリックに失敗: {click_err}。念のため次の候補も探します。")
+                                     # JavaScriptクリックなどを試すことも可能
+                        else:
+                             logger.debug(f"ラベル {i} に p.couponText が見つかりません。")
+
+                    if not found_and_clicked:
+                        logger.warning(f"クーポン '{cleaned_coupon_name}' がモーダル内で見つからないか、クリックできませんでした。")
+
                 except Exception as e:
-                    logger.warning(f"クーポン '{coupon_name}' の選択に失敗しました: {e}")
-            
-            # 「設定する」ボタンをクリック
+                    logger.error(f"クーポン '{coupon_name}' の選択処理中に予期せぬエラー: {e}", exc_info=True)
+
+                if not found_and_clicked:
+                     all_coupons_selected = False
+
+            if not all_coupons_selected:
+                 logger.error("一部またはすべてのクーポンの選択に失敗しました。")
+                 self.page.screenshot(path="coupon_selection_error_screenshot.png")
+                 # return False # 失敗しても設定ボタンは試す
+
+            # --- 「設定する」ボタンクリック処理 (変更なし部分も含む) ---
             logger.info("「設定する」ボタンをクリックします")
             try:
-                self.page.click("a.jsc_SB_modal_setting_btn")
+                # ボタンが表示されるまで待つ
+                setting_button_selector = "a.jsc_SB_modal_setting_btn"
+                setting_button = self.page.locator(setting_button_selector)
+                setting_button.wait_for(state="visible", timeout=10000) # 少し長めに待つ
+                
+                # is_disableクラスがないことを確認 (クリック可能か)
+                if "is_disable" not in (setting_button.get_attribute("class") or ""):
+                    logger.info("「設定する」ボタンが有効です。クリックします。")
+                    setting_button.click(timeout=5000)
+                else:
+                     logger.warning("「設定する」ボタンが無効状態 (is_disable) です。クリックをスキップします。")
+                     # クーポン選択に失敗している可能性が高い
+                     return False # 設定できないので失敗とする
+
             except Exception as e:
                 logger.warning(f"標準セレクタでの設定ボタンのクリックに失敗しました: {e}")
                 try:
                     # 代替セレクタで試行
-                    self.page.click("//a[contains(text(), '設定する')]")
+                    alt_setting_button_selector = "//a[contains(text(), '設定する')]"
+                    alt_setting_button = self.page.locator(alt_setting_button_selector)
+                    alt_setting_button.wait_for(state="visible", timeout=5000)
+                    
+                    if "is_disable" not in (alt_setting_button.get_attribute("class") or ""):
+                        alt_setting_button.click(timeout=5000)
+                        logger.info("代替セレクタで「設定する」ボタンをクリックしました。")
+                    else:
+                        logger.warning("代替セレクタでも「設定する」ボタンが無効状態です。")
+                        return False
+
                 except Exception as alt_e:
-                    logger.warning(f"代替方法での設定ボタンのクリックにも失敗しました: {alt_e}")
-            
+                    logger.error(f"代替方法での設定ボタンのクリックにも失敗しました: {alt_e}", exc_info=True)
+                    self.page.screenshot(path="coupon_setting_button_click_error.png")
+                    return False # 設定ボタンが押せない場合は失敗
+
             # モーダルが閉じるのを待つ
             logger.info("モーダルが閉じるのを待機します")
-            time.sleep(3)
-            
-            return True
-            
+            try:
+                # モーダルが非表示になるのを待つ
+                for selector in reversed(coupon_modal_selectors): 
+                    try:
+                        self.page.locator(selector).wait_for(state="hidden", timeout=10000) # 閉じるのを長めに待つ
+                        logger.info(f"クーポン選択モーダル ({selector}) が閉じました")
+                        break
+                    except TimeoutError:
+                         if selector == coupon_modal_selectors[0]: 
+                             logger.warning("クーポン選択モーダルが閉じるのを待機中にタイムアウトしました。")
+                    except Exception:
+                        pass 
+            except Exception as wait_close_e:
+                 logger.warning(f"モーダルが閉じるのを待機中にエラー: {wait_close_e}")
+
+            # 変更: クーポン選択が1つでも失敗したら最終的にFalseを返すようにする
+            if not all_coupons_selected:
+                logger.error("クーポン選択に失敗したため、処理全体を失敗とします。")
+                return False
+
+            return True # 全て成功した場合のみTrue
+
         except Exception as e:
-            logger.error(f"クーポン選択中にエラーが発生しました: {e}")
+            logger.error(f"クーポン選択処理全体でエラーが発生しました: {e}", exc_info=True) 
+            self.page.screenshot(path="coupon_selection_overall_error.png")
             return False
 
     def post_blog(self, blog_data):
