@@ -459,9 +459,11 @@ class SalonBoardPoster:
             if not self.page.query_selector(selector):
                 logger.warning(f"セレクタ '{selector}' が見つかりません")
                 return False
+            # セレクタ内のダブルクォートをエスケープ
+            escaped_selector = selector.replace('"', '\\\\"')
             js_script = f"""
             (function() {{
-                var el = document.querySelector("{selector.replace('"', '\\\\"')}");
+                var el = document.querySelector("{escaped_selector}");
                 if (el) {{
                     el.value = "{value}";
                     var event = new Event('input', {{ bubbles: true }});
@@ -546,9 +548,11 @@ class SalonBoardPoster:
     def _submit_form_by_js(self, form_selector):
         """JavaScriptを使用してフォームを送信する内部メソッド"""
         try:
+            # セレクタ内のダブルクォートをエスケープ
+            escaped_selector = form_selector.replace('"', '\\\\"')
             js_script = f"""
             (function() {{
-                var form = document.querySelector("{form_selector.replace('"', '\\\\"')}");
+                var form = document.querySelector("{escaped_selector}");
                 if (form) {{ form.submit(); return true; }}
                 return false;
             }})()
