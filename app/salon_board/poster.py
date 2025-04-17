@@ -53,7 +53,14 @@ class SalonBoardPoster:
         "#captcha",
         "input[name*='captcha']",
         "[aria-label*='ロボット']",
-        "[aria-label*='認証']"
+        "[aria-label*='認証']",
+        "th.th_item[width='40%'][align='center']",  # サロンボードの画像認証テーブルヘッダー
+        "table:has(th.th_item)",                    # 画像認証テーブル全体
+        "img[alt*='認証']",                         # 認証画像
+        "div:has(> img[alt*='認証'])",              # 認証画像を含む要素
+        "div.auth-container",                       # 認証コンテナ
+        "form[action*='auth']",                     # 認証フォーム
+        "input[type='text'][name*='auth']"          # 認証入力フィールド
     ]
     _WIDGET_SELECTORS = [
         '.karte-widget__container',
@@ -158,6 +165,7 @@ class SalonBoardPoster:
         Returns:
             bool: ロボット認証が検出された場合はTrue、そうでない場合はFalse
         """
+        # 基本的なロボット認証セレクタをチェック
         for selector in self._ROBOT_SELECTORS:
             try:
                 if self.page.query_selector(selector):
@@ -165,7 +173,46 @@ class SalonBoardPoster:
                     return True
             except:
                 continue
+        
+        # 画像認証テーブル要素をチェック
+        try:
+            # ユーザーが指定したテーブルヘッダー要素を確認
+            image_auth_header = 'th.th_item[width="40%"][align="center"]'
+            if self.page.query_selector(image_auth_header):
+                logger.warning("画像認証テーブルヘッダーが検出されました")
+                return True
                 
+            # テキストコンテンツで「画像認証」を含む要素を検索
+            has_image_auth = self.page.evaluate('''
+                () => {
+                    const elements = document.querySelectorAll('th, td, div, p, span');
+                    for (const el of elements) {
+                        if (el.textContent && el.textContent.includes('画像認証')) {
+                            console.log('画像認証テキストを含む要素を検出:', el);
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+            ''')
+            
+            if has_image_auth:
+                logger.warning("「画像認証」テキストが検出されました")
+                self.page.screenshot(path="image_auth_detected.png")
+                return True
+            
+            # URLやタイトルに基づく検出
+            current_url = self.page.url
+            current_title = self.page.title()
+            
+            if "captcha" in current_url.lower() or "認証" in current_title:
+                logger.warning(f"認証関連のURLまたはタイトルを検出: URL={current_url}, タイトル={current_title}")
+                self.page.screenshot(path="auth_url_title_detected.png")
+                return True
+                
+        except Exception as e:
+            logger.error(f"認証チェック中にエラー: {e}")
+        
         return False
 
     def login(self, user_id, password):
@@ -246,6 +293,7 @@ class SalonBoardPoster:
             
             if self.is_robot_detection_present():
                 logger.error("ログイン時にロボット認証が検出されました。処理を中断します。")
+                self.page.screenshot(path="login_image_auth_detected.png")
                 return False
             
             logger.info("入力フィールドを検索します")
@@ -276,6 +324,13 @@ class SalonBoardPoster:
             
             logger.info("JavaScriptを使用してログイン処理を実行します")
             login_result = self.page.evaluate(js_login_script)
+            
+            # ログインボタンクリック直後に画像認証の確認
+            time.sleep(2)  # 認証画面表示のための短い待機
+            if self.is_robot_detection_present():
+                logger.error("ログインボタンクリック後に画像認証が検出されました。処理を中断します。")
+                self.page.screenshot(path="login_image_auth_detected.png")
+                return False
             
             if not login_result:
                 logger.error("JavaScriptによるログイン処理に失敗しました")
@@ -319,6 +374,13 @@ class SalonBoardPoster:
             else:
                 logger.info("JavaScriptによるログイン処理が成功しました")
             
+            # ダッシュボード表示待機前にもう一度認証確認
+            time.sleep(1)
+            if self.is_robot_detection_present():
+                logger.error("ログイン処理後に画像認証が検出されました。処理を中断します。")
+                self.page.screenshot(path="post_login_auth_detected.png")
+                return False
+            
             logger.info("ダッシュボードの表示を待機します...")
             try:
                 # 定数を使用
@@ -328,6 +390,13 @@ class SalonBoardPoster:
                 current_url = self.page.url
                 current_title = self.page.title()
                 logger.error(f"ログイン後のダッシュボード表示がタイムアウトしました。現在のURL: {current_url}, タイトル: {current_title}")
+                
+                # タイムアウト時にも認証確認
+                if self.is_robot_detection_present():
+                    logger.error("ダッシュボード表示待機中に画像認証が検出されました。")
+                    self.page.screenshot(path="dashboard_timeout_auth_detected.png")
+                    return False
+                
                 self.page.screenshot(path="login_timeout_screenshot.png")
                 return False
                 
