@@ -898,9 +898,10 @@ class SalonBoardPoster:
             blog_data (dict): ブログ投稿に必要なデータ
                 
         Returns:
-            bool: 成功でTrue、失敗でFalse
+            bool or dict: 成功でTrue、失敗でFalse。成功時はスクリーンショットのパスを含む辞書を返す
         """
         success = False
+        screenshot_path = None
         start_time = time.time()
         logger.info("=== Salon Boardブログ投稿処理 開始 ===")
         try:
@@ -928,6 +929,19 @@ class SalonBoardPoster:
             success = True
             logger.info("=== Salon Boardブログ投稿処理 正常終了 ===")
             
+            # 成功時にスクリーンショットを撮る
+            try:
+                # ページのレンダリングが完了するまで待機（5秒）
+                logger.info("スクリーンショット撮影前に2秒待機します...")
+                time.sleep(2)
+                
+                screenshot_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'uploads', f'success_screenshot_{int(time.time())}.png')
+                self.page.screenshot(path=screenshot_path)
+                logger.info(f"投稿成功後のスクリーンショットを保存しました: {screenshot_path}")
+            except Exception as ss_err:
+                logger.error(f"スクリーンショット撮影時にエラー: {ss_err}")
+                screenshot_path = None
+            
         except Exception as e:
             #予期せぬエラーのキャッチ
             logger.error(f"ブログ投稿処理の予期せぬエラー: {e}", exc_info=True)
@@ -943,4 +957,10 @@ class SalonBoardPoster:
             end_time = time.time()
             logger.info(f"処理時間: {end_time - start_time:.2f} 秒")
             
+        # 成功時はスクリーンショットパスを含む辞書を返す
+        if success and screenshot_path:
+            return {
+                'success': True,
+                'screenshot_path': screenshot_path
+            }
         return success 

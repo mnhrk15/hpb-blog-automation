@@ -131,10 +131,16 @@ function saveScrollPosition() {
  */
 function restoreScrollPosition() {
     const scrollPosition = sessionStorage.getItem('scrollPosition');
-    if (scrollPosition) {
+    // スクリーンショットが表示されている場合はスクロール位置を復元しない
+    const hasScreenshot = document.querySelector('.simple-card .card-title h3 i.bi-check-circle-fill') !== null;
+    
+    if (scrollPosition && !hasScreenshot) {
         setTimeout(() => {
             window.scrollTo(0, parseInt(scrollPosition));
         }, 100);
+    } else if (hasScreenshot) {
+        // スクリーンショットがある場合は常にトップにスクロール
+        window.scrollTo(0, 0);
     }
 }
 

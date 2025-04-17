@@ -16,6 +16,21 @@
         </div>
     </div>
 
+    {% if success_screenshot %}
+    <!-- スクリーンショット表示 -->
+    <div class="simple-card mb-4">
+        <div class="card-title">
+            <h3><i class="bi bi-check-circle-fill text-success"></i> 投稿完了</h3>
+        </div>
+        <div class="alert alert-success mb-3">
+            <i class="bi bi-check-lg"></i> サロンボードへの投稿が完了しました
+        </div>
+        <div class="text-center">
+            <img src="{{ success_screenshot }}" alt="投稿完了画面" class="img-fluid border rounded shadow-sm" style="max-height: 500px;">
+        </div>
+    </div>
+    {% endif %}
+
     <!-- 1. アップロードされた画像 -->
     <div class="simple-card">
         <div class="card-title">

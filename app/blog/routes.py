@@ -26,6 +26,7 @@ SALON_BOARD_USER_ID_KEY = 'salon_board_user_id'
 SALON_BOARD_PASSWORD_KEY = 'salon_board_password'
 SALON_BOARD_STYLIST_ID_KEY = 'salon_board_stylist_id'
 SELECTED_COUPON_NAME_KEY = 'selected_coupon_name'
+SUCCESS_SCREENSHOT_KEY = 'success_screenshot'
 
 @bp.route('/')
 @login_required
@@ -37,6 +38,8 @@ def index():
         session.pop(GENERATED_CONTENT_KEY)
     if HAIR_INFO_KEY in session:
         session.pop(HAIR_INFO_KEY)
+    if SUCCESS_SCREENSHOT_KEY in session:
+        session.pop(SUCCESS_SCREENSHOT_KEY)
     
     return render_template('blog/index.html')
 
@@ -110,6 +113,13 @@ def generate():
     # テンプレート情報を取得
     selected_template = session.get(SELECTED_TEMPLATE_KEY, '')
     
+    # 投稿成功スクリーンショットを取得（あれば）
+    success_screenshot = None
+    if SUCCESS_SCREENSHOT_KEY in session:
+        screenshot_path = session[SUCCESS_SCREENSHOT_KEY]
+        # ファイル名だけを取得して画像URLを生成
+        success_screenshot = url_for('uploaded_file', filename=os.path.basename(screenshot_path))
+    
     return render_template(
         'blog/generate.html', 
         image_urls=image_urls,
@@ -118,7 +128,8 @@ def generate():
         salon_url=salon_url,
         stylists=stylists,
         coupons=coupons,
-        selected_template=selected_template
+        selected_template=selected_template,
+        success_screenshot=success_screenshot # スクリーンショットを追加
     )
 
 @bp.route('/generate-content', methods=['POST', 'GET'])
@@ -337,7 +348,7 @@ def post_to_salon_board():
     session[SALON_BOARD_STYLIST_ID_KEY] = stylist_id
     session[SELECTED_COUPON_NAME_KEY] = selected_coupon
     
-    # SalonBoardPosterのインスタンスを作成（デバッグしやすいようにヘッドフルモード）
+    # SalonBoardPosterのインスタンスを作成
     logger.info("SalonBoardPoster インスタンスを作成します")
     poster = SalonBoardPoster(slow_mo=200)
     
@@ -345,12 +356,21 @@ def post_to_salon_board():
     try:
         logger.info("ブログ投稿処理を開始します")
         # サロンボードへの投稿を実行
-        if poster.execute_post(user_id, password, blog_data):
+        result = poster.execute_post(user_id, password, blog_data)
+        
+        if isinstance(result, dict) and result.get('success'):
+            # スクリーンショットパスをセッションに保存
+            session[SUCCESS_SCREENSHOT_KEY] = result.get('screenshot_path')
             flash('サロンボードへのブログ投稿が完了しました', 'success')
+            success = True
+        elif result:
+            # 単なる True の場合（スクリーンショットなし)
+            flash('サロンボードへのブログ投稿が完了しました', 'success')
+            success = True
         else:
             flash('サロンボードへの投稿に失敗しました。詳細はログを確認してください。', 'error')
     except Exception as e:
-        current_app.logger.error(f"サロンボード投稿エラー: {str(e)}")
+        logger.error(f"サロンボード投稿エラー: {str(e)}")
         flash(f'サロンボードへの投稿中にエラーが発生しました: {str(e)}', 'error')
     
     return redirect(url_for('blog.generate')) 
