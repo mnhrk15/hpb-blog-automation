@@ -1,4 +1,5 @@
 import os
+import logging
 from flask import render_template, redirect, url_for, request, flash, current_app, session, jsonify
 from app.blog import bp
 from app.auth.routes import login_required
@@ -10,6 +11,8 @@ from app.gemini.extractor import HairStyleExtractor
 from app.scraper.stylist import StylistScraper
 from app.scraper.coupon import CouponScraper
 from app.salon_board import SalonBoardPoster
+
+logger = logging.getLogger(__name__)
 
 # 画像ファイルの一時保存用セッションキー
 UPLOADED_IMAGES_KEY = 'blog_uploaded_images'
@@ -57,7 +60,7 @@ def upload():
                 if filename:
                     uploaded_images.append(filename)
             except Exception as e:
-                current_app.logger.error(f"画像アップロードエラー: {str(e)}")
+                logger.error(f"画像アップロードエラー: {str(e)}")
                 flash(f'画像のアップロードに失敗しました: {str(e)}', 'error')
     
     if not uploaded_images:
@@ -73,9 +76,9 @@ def upload():
         hair_info = extractor.extract_hair_info(uploaded_images[0])
         if hair_info:
             session[HAIR_INFO_KEY] = hair_info
-            current_app.logger.info(f"ヘアスタイル情報を抽出しました: {hair_info}")
+            logger.info(f"ヘアスタイル情報を抽出しました: {hair_info}")
     except Exception as e:
-        current_app.logger.error(f"ヘアスタイル情報抽出エラー: {str(e)}")
+        logger.error(f"ヘアスタイル情報抽出エラー: {str(e)}")
         # 抽出に失敗しても処理を続行
     
     return redirect(url_for('blog.generate'))
@@ -148,7 +151,7 @@ def generate_content():
         session[GENERATED_CONTENT_KEY] = content
         flash('ブログ内容を生成しました', 'success')
     except Exception as e:
-        current_app.logger.error(f"ブログ生成エラー: {str(e)}")
+        logger.error(f"ブログ生成エラー: {str(e)}")
         flash(f'ブログ内容の生成中にエラーが発生しました: {str(e)}', 'error')
     
     return redirect(url_for('blog.generate'))
@@ -233,7 +236,7 @@ def fetch_salon_info():
         
         flash(f'サロン情報を取得しました。スタイリスト: {len(stylists)}人、クーポン: {len(coupons)}件', 'success')
     except Exception as e:
-        current_app.logger.error(f"サロン情報取得エラー: {str(e)}")
+        logger.error(f"サロン情報取得エラー: {str(e)}")
         flash(f'サロン情報の取得に失敗しました: {str(e)}', 'error')
     
     return redirect(url_for('blog.generate'))
@@ -335,9 +338,12 @@ def post_to_salon_board():
     session[SELECTED_COUPON_NAME_KEY] = selected_coupon
     
     # SalonBoardPosterのインスタンスを作成（デバッグしやすいようにヘッドフルモード）
-    poster = SalonBoardPoster(headless=False, slow_mo=200)
+    logger.info("SalonBoardPoster インスタンスを作成します")
+    poster = SalonBoardPoster(slow_mo=200)
     
+    success = False
     try:
+        logger.info("ブログ投稿処理を開始します")
         # サロンボードへの投稿を実行
         if poster.execute_post(user_id, password, blog_data):
             flash('サロンボードへのブログ投稿が完了しました', 'success')

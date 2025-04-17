@@ -63,12 +63,12 @@ class SalonBoardPoster:
     ]
     # --- セレクタ定義 終了 ---
 
-    def __init__(self, headless=False, slow_mo=100):
+    def __init__(self, headless=True, slow_mo=100):
         """
         初期化メソッド
         
         Args:
-            headless (bool): ヘッドレスモードで実行するかどうか。デフォルトはFalse（ブラウザ表示あり）。
+            headless (bool): ヘッドレスモードで実行するかどうか。デフォルトはTrue（ヘッドレスモード）。
             slow_mo (int): アクションの間に入れる遅延時間（ミリ秒）。デバッグ時に視認性を高めるため。
         """
         self.headless = headless
@@ -85,37 +85,31 @@ class SalonBoardPoster:
         try:
             self.playwright = sync_playwright().start()
             
-            # 自動化回避のためのオプションを強化
-            launch_args = [
-                "--disable-blink-features=AutomationControlled",
-                "--disable-infobars",
-                "--disable-extensions",
-                "--disable-dev-shm-usage", 
-                "--disable-gpu",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-            ]
+            # Firefox用に起動引数を一旦空にする
+            launch_args = []
 
-            self.browser = self.playwright.chromium.launch(
+            self.browser = self.playwright.firefox.launch( # chromium から firefox に変更
                 headless=self.headless,
                 slow_mo=self.slow_mo,
-                args=launch_args
+                args=launch_args,
+                timeout=90000 # 起動タイムアウトは維持
             )
             
             context = self.browser.new_context(
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/115.0", # FirefoxのUser-Agentに変更
                 viewport={"width": 1920, "height": 1080},
                 locale="ja-JP",
                 timezone_id="Asia/Tokyo",
                 permissions=['geolocation']
             )
             
-            # JavaScript実行前の初期設定（自動化を隠す）
+            # JavaScript実行前の初期設定（webdriver偽装は残す）
             context.add_init_script("""
                 Object.defineProperty(navigator, 'webdriver', {
                     get: () => undefined
                 });
             """)
+            # Firefoxでの効果は不明だが、他の偽装も一旦残して試す
             context.add_init_script("""
                 // プラグイン情報の偽装
                 Object.defineProperty(navigator, 'plugins', {
@@ -129,8 +123,8 @@ class SalonBoardPoster:
                 try {
                     const getParameter = WebGLRenderingContext.prototype.getParameter;
                     WebGLRenderingContext.prototype.getParameter = function(parameter) {
-                        if (parameter === 37445) { return 'Google Inc. (Intel)'; }
-                        if (parameter === 37446) { return 'ANGLE (Intel, Intel(R) Iris(TM) Plus Graphics 640, OpenGL 4.1)'; }
+                        if (parameter === 37445) { return 'Mozilla'; } // Firefox向けに調整
+                        if (parameter === 37446) { return 'Mozilla'; } // Firefox向けに調整
                         return getParameter.call(this, parameter);
                     };
                 } catch (e) { console.error('WebGL spoofing failed:', e); }

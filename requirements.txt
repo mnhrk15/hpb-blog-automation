@@ -6,6 +6,7 @@ flask-wtf==1.1.1
 
 # ブラウザ自動操作
 playwright==1.40.0
+# Playwright を最新バージョンに更新 (例: playwright==1.45.0 など)
 
 # AI 画像処理・テキスト生成
 google-generativeai==0.3.2
