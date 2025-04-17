@@ -165,30 +165,32 @@ class SalonBoardPoster:
         Returns:
             bool: ロボット認証が検出された場合はTrue、そうでない場合はFalse
         """
-        # 基本的なロボット認証セレクタをチェック
-        for selector in self._ROBOT_SELECTORS:
-            try:
-                if self.page.query_selector(selector):
-                    logger.warning(f"ロボット認証が検出されました: {selector}")
-                    return True
-            except:
-                continue
-        
-        # 画像認証テーブル要素をチェック
+        # まず、ページのURLやタイトルで判断
         try:
-            # ユーザーが指定したテーブルヘッダー要素を確認
-            image_auth_header = 'th.th_item[width="40%"][align="center"]'
-            if self.page.query_selector(image_auth_header):
-                logger.warning("画像認証テーブルヘッダーが検出されました")
+            current_url = self.page.url
+            page_title = self.page.title()
+            
+            # URLやタイトルに認証関連のキーワードがある場合
+            auth_keywords = ['captcha', 'recaptcha', 'verify', '認証', 'auth']
+            if any(keyword in current_url.lower() for keyword in auth_keywords) or \
+               any(keyword in page_title.lower() for keyword in auth_keywords):
+                logger.warning(f"URL/タイトルからロボット認証を検出: {current_url} / {page_title}")
                 return True
-                
-            # テキストコンテンツで「画像認証」を含む要素を検索
+        except Exception as e:
+            logger.error(f"URL/タイトル検証中のエラー: {e}")
+        
+        # 「画像認証」テキストを優先的に検索
+        try:
             has_image_auth = self.page.evaluate('''
                 () => {
-                    const elements = document.querySelectorAll('th, td, div, p, span');
+                    const elements = document.querySelectorAll('th, td, div, p, span, label, h1, h2, h3, h4, h5, h6');
                     for (const el of elements) {
-                        if (el.textContent && el.textContent.includes('画像認証')) {
-                            console.log('画像認証テキストを含む要素を検出:', el);
+                        if (el.textContent && (
+                            el.textContent.includes('画像認証') || 
+                            el.textContent.includes('認証画像') || 
+                            el.textContent.includes('画像を選択') ||
+                            el.textContent.includes('画像を選んでください')
+                        )) {
                             return true;
                         }
                     }
@@ -197,22 +199,61 @@ class SalonBoardPoster:
             ''')
             
             if has_image_auth:
-                logger.warning("「画像認証」テキストが検出されました")
-                self.page.screenshot(path="image_auth_detected.png")
+                logger.warning("テキスト「画像認証」が検出されました")
                 return True
-            
-            # URLやタイトルに基づく検出
-            current_url = self.page.url
-            current_title = self.page.title()
-            
-            if "captcha" in current_url.lower() or "認証" in current_title:
-                logger.warning(f"認証関連のURLまたはタイトルを検出: URL={current_url}, タイトル={current_title}")
-                self.page.screenshot(path="auth_url_title_detected.png")
-                return True
-                
         except Exception as e:
-            logger.error(f"認証チェック中にエラー: {e}")
+            logger.error(f"画像認証テキスト検証中のエラー: {e}")
         
+        # 認証フォーム要素の存在チェック
+        critical_selectors = [
+            "iframe[src*='recaptcha']",
+            "iframe[src*='captcha']",
+            "div.g-recaptcha",
+            "form[action*='auth']",
+            "img[alt*='認証']",
+            "input[name*='captcha']"
+        ]
+        
+        for selector in critical_selectors:
+            try:
+                if self.page.query_selector(selector):
+                    logger.warning(f"ロボット認証要素が検出されました: {selector}")
+                    return True
+            except Exception:
+                continue
+                
+        # ログイン画面の場合は認証と判断しない
+        try:
+            login_indicators = [
+                "input[type='password']",
+                "button[type='submit']",
+                "input[type='submit']"
+            ]
+            
+            login_texts = self.page.evaluate('''
+                () => {
+                    const elements = document.querySelectorAll('th, td, div, p, span, label, h1, h2, h3, h4, h5, h6');
+                    for (const el of elements) {
+                        if (el.textContent && (
+                            el.textContent.includes('ログイン') || 
+                            el.textContent.includes('サインイン') || 
+                            el.textContent.includes('ユーザーID') ||
+                            el.textContent.includes('パスワード')
+                        )) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+            ''')
+            
+            # ログイン関連の要素があり、認証関連の要素がない場合は通常のログイン画面と判断
+            if login_texts and any(self.page.query_selector(selector) for selector in login_indicators):
+                logger.info("通常のログイン画面と判断します")
+                return False
+        except Exception as e:
+            logger.error(f"ログイン画面検証中のエラー: {e}")
+            
         return False
 
     def login(self, user_id, password):
@@ -967,10 +1008,12 @@ class SalonBoardPoster:
             blog_data (dict): ブログ投稿に必要なデータ
                 
         Returns:
-            bool or dict: 成功でTrue、失敗でFalse。成功時はスクリーンショットのパスを含む辞書を返す
+            bool or dict: 成功でTrue、失敗でFalse。成功時はスクリーンショットのパスを含む辞書を返す。
+                         ロボット認証検出時は失敗でもスクリーンショットのパスを含む辞書を返す。
         """
         success = False
         screenshot_path = None
+        robot_detected = False
         start_time = time.time()
         logger.info("=== Salon Boardブログ投稿処理 開始 ===")
         try:
@@ -980,19 +1023,56 @@ class SalonBoardPoster:
                 return False 
             
             # --- 2. ログイン実行 ---
-            if not self._step_login(user_id, password):
+            login_result = self._step_login(user_id, password)
+            if not login_result:
                 # _step_login内でエラーログ出力済み
-                return False 
+                # ロボット認証か確認
+                if self.is_robot_detection_present():
+                    robot_detected = True
+                    logger.error("ログイン中にロボット認証が検出されました")
+                    # スクリーンショットを撮影
+                    try:
+                        screenshot_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'uploads', f'robot_auth_screenshot_{int(time.time())}.png')
+                        self.page.screenshot(path=screenshot_path)
+                        logger.info(f"ロボット認証のスクリーンショットを保存しました: {screenshot_path}")
+                    except Exception as ss_err:
+                        logger.error(f"ロボット認証のスクリーンショット撮影時にエラー: {ss_err}")
+                        screenshot_path = None
+                return {'success': False, 'robot_detected': True, 'screenshot_path': screenshot_path} if screenshot_path else False
             
             # --- 3. ブログ投稿ページへ移動 ---
             if not self._step_navigate_to_blog_form():
                 # _step_navigate_to_blog_form内でエラーログ出力済み
-                return False 
+                # ロボット認証か確認
+                if self.is_robot_detection_present():
+                    robot_detected = True
+                    logger.error("ページ移動中にロボット認証が検出されました")
+                    # スクリーンショットを撮影
+                    try:
+                        screenshot_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'uploads', f'robot_auth_screenshot_{int(time.time())}.png')
+                        self.page.screenshot(path=screenshot_path)
+                        logger.info(f"ロボット認証のスクリーンショットを保存しました: {screenshot_path}")
+                    except Exception as ss_err:
+                        logger.error(f"ロボット認証のスクリーンショット撮影時にエラー: {ss_err}")
+                        screenshot_path = None
+                return {'success': False, 'robot_detected': True, 'screenshot_path': screenshot_path} if screenshot_path else False
             
             # --- 4. ブログデータ入力・投稿 --- 
             if not self._step_post_blog_data(blog_data):
                 # _step_post_blog_data内でエラーログ出力済み
-                return False
+                # ロボット認証か確認
+                if self.is_robot_detection_present():
+                    robot_detected = True
+                    logger.error("ブログデータ入力・投稿中にロボット認証が検出されました")
+                    # スクリーンショットを撮影
+                    try:
+                        screenshot_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'uploads', f'robot_auth_screenshot_{int(time.time())}.png')
+                        self.page.screenshot(path=screenshot_path)
+                        logger.info(f"ロボット認証のスクリーンショットを保存しました: {screenshot_path}")
+                    except Exception as ss_err:
+                        logger.error(f"ロボット認証のスクリーンショット撮影時にエラー: {ss_err}")
+                        screenshot_path = None
+                return {'success': False, 'robot_detected': True, 'screenshot_path': screenshot_path} if screenshot_path else False
             
             # 全てのステップが成功した場合
             success = True
@@ -1000,7 +1080,7 @@ class SalonBoardPoster:
             
             # 成功時にスクリーンショットを撮る
             try:
-                # ページのレンダリングが完了するまで待機（5秒）
+                # ページのレンダリングが完了するまで待機（2秒）
                 logger.info("スクリーンショット撮影前に2秒待機します...")
                 time.sleep(2)
                 
@@ -1015,19 +1095,43 @@ class SalonBoardPoster:
             #予期せぬエラーのキャッチ
             logger.error(f"ブログ投稿処理の予期せぬエラー: {e}", exc_info=True)
             success = False
-            # エラー発生時にもスクリーンショットを試みる
-            if self.page:
-                try: self.page.screenshot(path="execute_post_unexpected_error.png")
-                except Exception as ss_err: logger.error(f"予期せぬエラー時のスクリーンショット撮影失敗: {ss_err}")
+            
+            # ロボット認証か確認
+            if self.page and self.is_robot_detection_present():
+                robot_detected = True
+                logger.error("予期せぬエラー時にロボット認証が検出されました")
+                # スクリーンショットを撮影
+                try:
+                    screenshot_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'uploads', f'robot_auth_screenshot_{int(time.time())}.png')
+                    self.page.screenshot(path=screenshot_path)
+                    logger.info(f"ロボット認証のスクリーンショットを保存しました: {screenshot_path}")
+                except Exception as ss_err:
+                    logger.error(f"ロボット認証のスクリーンショット撮影時にエラー: {ss_err}")
+                    screenshot_path = None
+            # エラー発生時にもスクリーンショットを試みる（ロボット認証でない場合）
+            elif self.page and not robot_detected:
+                try: 
+                    error_screenshot_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'uploads', f'error_screenshot_{int(time.time())}.png')
+                    self.page.screenshot(path=error_screenshot_path)
+                    logger.info(f"エラー時のスクリーンショットを保存しました: {error_screenshot_path}")
+                    screenshot_path = error_screenshot_path
+                except Exception as ss_err: 
+                    logger.error(f"予期せぬエラー時のスクリーンショット撮影失敗: {ss_err}")
         finally:
             # --- 5. ブラウザ終了 ---
             logger.info("ブラウザを終了します。")
             self.close()
             end_time = time.time()
             logger.info(f"処理時間: {end_time - start_time:.2f} 秒")
-            
-        # 成功時はスクリーンショットパスを含む辞書を返す
-        if success and screenshot_path:
+        
+        # 結果を返す
+        if robot_detected and screenshot_path:
+            return {
+                'success': False,
+                'robot_detected': True,
+                'screenshot_path': screenshot_path
+            }
+        elif success and screenshot_path:
             return {
                 'success': True,
                 'screenshot_path': screenshot_path

@@ -27,6 +27,7 @@ SALON_BOARD_PASSWORD_KEY = 'salon_board_password'
 SALON_BOARD_STYLIST_ID_KEY = 'salon_board_stylist_id'
 SELECTED_COUPON_NAME_KEY = 'selected_coupon_name'
 SUCCESS_SCREENSHOT_KEY = 'success_screenshot'
+ROBOT_DETECTED_KEY = 'robot_detected'
 
 @bp.route('/')
 @login_required
@@ -40,6 +41,8 @@ def index():
         session.pop(HAIR_INFO_KEY)
     if SUCCESS_SCREENSHOT_KEY in session:
         session.pop(SUCCESS_SCREENSHOT_KEY)
+    if ROBOT_DETECTED_KEY in session:
+        session.pop(ROBOT_DETECTED_KEY)
     
     return render_template('blog/index.html')
 
@@ -358,13 +361,24 @@ def post_to_salon_board():
         # サロンボードへの投稿を実行
         result = poster.execute_post(user_id, password, blog_data)
         
-        if isinstance(result, dict) and result.get('success'):
-            # スクリーンショットパスをセッションに保存
-            session[SUCCESS_SCREENSHOT_KEY] = result.get('screenshot_path')
-            flash('サロンボードへのブログ投稿が完了しました', 'success')
-            success = True
+        if isinstance(result, dict):
+            # ロボット認証が検出された場合
+            if not result.get('success') and result.get('robot_detected') and result.get('screenshot_path'):
+                session[SUCCESS_SCREENSHOT_KEY] = result.get('screenshot_path')
+                session[ROBOT_DETECTED_KEY] = True
+                flash('サロンボードへの投稿中にロボット認証が検出されました。手動でログインしてください。', 'error')
+                return redirect(url_for('blog.generate'))
+            
+            # 成功した場合
+            if result.get('success'):
+                # スクリーンショットパスをセッションに保存
+                session[SUCCESS_SCREENSHOT_KEY] = result.get('screenshot_path')
+                session[ROBOT_DETECTED_KEY] = False
+                flash('サロンボードへのブログ投稿が完了しました', 'success')
+                success = True
         elif result:
             # 単なる True の場合（スクリーンショットなし)
+            session[ROBOT_DETECTED_KEY] = False
             flash('サロンボードへのブログ投稿が完了しました', 'success')
             success = True
         else:
