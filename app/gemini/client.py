@@ -98,32 +98,47 @@ class GeminiClient:
             title = ""
             content = ""
             
-            # タイトルの抽出（【タイトル】の後の行を取得）
-            title_index = generated_text.find("【タイトル】")
+            # タイトルの抽出（タイトル: の行を抽出）
+            title_index = generated_text.find("タイトル:")
             if title_index >= 0:
-                title_start = generated_text.find("\n", title_index) + 1
-                title_end = generated_text.find("\n\n", title_start)
-                if title_end >= 0:
-                    title = generated_text[title_start:title_end].strip()
+                # "タイトル:" の開始位置から行末までを探す
+                line_end_index = generated_text.find("\n", title_index)
+                if line_end_index >= 0:
+                    # 改行が見つかった場合、"タイトル:" から改行までを抽出
+                    title_line = generated_text[title_index:line_end_index]
                 else:
-                    # 次のセクションが見つからない場合は残りすべてを取得
-                    title = generated_text[title_start:].strip()
-            
-            # 本文の抽出（【本文】の後の行を取得）
-            content_index = generated_text.find("【本文】")
+                    # 改行が見つからない場合（最終行など）、"タイトル:" から文字列末尾までを抽出
+                    title_line = generated_text[title_index:]
+
+                # "タイトル:" マーカー自体を除去してトリム
+                title = title_line[len("タイトル:"):].strip()
+
+            # 本文の抽出（本文: の後の行を取得）
+            content_index = generated_text.find("本文:")
             if content_index >= 0:
                 content_start = generated_text.find("\n", content_index) + 1
+                # "本文:" の後の改行から最後までを本文とする
                 content = generated_text[content_start:].strip()
             
-            # タイトルと本文が見つからない場合はテキスト全体を本文とする
+            # タイトルと本文が見つからない場合のフォールバック処理を改善
             if not title and not content:
+                # "タイトル:" や "本文:" がない場合、全体を本文とするか、エラーとするか検討
+                # ここでは元のロジックに近い形で、全体を本文とする
                 title = "自動生成タイトル"
                 content = generated_text.strip()
-            elif not title:
-                title = "自動生成タイトル"
-            elif not content:
-                content = "本文が生成されませんでした。"
-            
+            elif not title and generated_text.strip(): # タイトルがなく本文がある（かもしれない）場合
+                 title = "自動生成タイトル" # タイトルだけ補完
+                 if not content: # contentも空ならgenerated_text全体をcontentに（上記ifとの重複を避ける）
+                     content = generated_text.strip()
+            elif not content and generated_text.strip(): # 本文がなくタイトルがある（かもしれない）場合
+                content = "本文が生成されませんでした。" # 本文だけ補完
+
+            # タイトルや本文の先頭にマーカー自身が含まれていないか確認・除去 (念のため)
+            if title.startswith("タイトル:"):
+                title = title[len("タイトル:"):].strip()
+            if content.startswith("本文:"):
+                content = content[len("本文:"):].strip()
+
             return {
                 "title": title,
                 "content": content
