@@ -1,0 +1,45 @@
+# Git関連ファイル
+.git
+.gitignore
+
+# Python仮想環境
+.venv
+venv
+
+# Pythonキャッシュファイル
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS固有ファイル
+.DS_Store
+Thumbs.db
+
+# IDE/エディタ設定ファイル (例)
+.vscode/
+.idea/
+
+# 環境変数ファイル (重要: イメージに含めない)
+.env
+*.env
+
+# アップロードファイルディレクトリ (ボリュームを使うため)
+uploads/
+local_uploads/
+
+# ログファイル
+*.log
+logs/
+
+# Docker関連ファイル (このファイル自身は無視しない)
+Dockerfile
+.dockerignore
+
+# テスト関連 (必要に応じて)
+tests/
+pytest.ini
+.coverage
+
+# その他不要なファイルやディレクトリ
+# (例: node_modules/ など、もしNode.jsも使う場合)

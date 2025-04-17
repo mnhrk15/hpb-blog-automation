@@ -654,43 +654,66 @@ class SalonBoardPoster:
     def set_rich_text_content(self, content):
         """nicEditリッチテキストエディタにコンテンツを設定する"""
         try:
-            escaped_content = content.replace('\\\\', '\\\\\\\\').replace('`', '\\`').replace('$', '\\$')
-            
-            # JS内の editor ID は定数化しない (nicEditors.findEditor の引数)
-            js_script = f"""
-            (function() {{
-                try {{
-                    var editorInstance = nicEditors.findEditor('blogContents');
-                    if (editorInstance) {{ editorInstance.setContent(`{escaped_content}`); return true; }}
-                    else {{ console.error('nicEdit editor instance not found for blogContents'); return false; }}
-                }} catch(e) {{ console.error('nicEdit操作エラー:', e); return false; }}
-            }})()
-            """
-            logger.debug(f"Executing nicEdit script with content: {escaped_content[:100]}...")
+            # コンテンツをJavaScript文字列リテラル用にエスケープ
+            escaped_content = json.dumps(content)[1:-1]
+
+            # JavaScriptコードのテンプレート文字列
+            # JavaScriptの { と } は {{ と }} でエスケープする
+            js_script_template = """
+(function() {{ // Escaped
+    try {{     // Escaped
+        var editorInstance = nicEditors.findEditor('blogContents');
+        if (editorInstance) {{ // Escaped
+            // {0} はプレースホルダーなのでエスケープしない
+            editorInstance.setContent(`{0}`);
+            return true;
+        }} else {{            // Escaped
+            console.error('nicEdit editor instance not found for blogContents');
+            return false;
+        }}                 // Escaped
+    }} catch(e) {{        // Escaped
+        console.error('nicEdit操作エラー:', e);
+        return false;
+    }}                 // Escaped
+}})()                // Escaped
+"""
+            # .format() を使ってテンプレートにエスケープ済みコンテンツを挿入
+            js_script = js_script_template.format(escaped_content)
+
+            logger.debug("Executing nicEdit script...")
             result = self.page.evaluate(js_script)
-            
+
             if result:
-                logger.info("JavaScriptを使用してnicEditに内容を設定しました"); return True
+                logger.info("JavaScriptを使用してnicEditに内容を設定しました")
+                return True
             else:
-                logger.warning("JavaScriptを使用したnicEditへの内容設定に失敗しました。代替手段を試みます。")
+                # === 代替手段 ===
+                logger.warning("JavaScriptを使用したnicEditへの内容設定に失敗。代替手段 (iframe fill) を試みます。")
                 try:
-                    logger.info("代替方法でエディタに本文を設定します")
-                    # 定数を使用
                     iframe_selector = self._BLOG_FORM_NICEDIT_IFRAME
-                    iframe = self.page.frame_locator(iframe_selector) 
+                    iframe = self.page.frame_locator(iframe_selector)
                     if iframe.count() > 0:
-                        iframe.locator("body").fill(content) 
-                        logger.info("iframe内のbodyに内容を設定しました")
+                        iframe.locator("body").fill(content)
+                        logger.info("代替手段: iframe内のbodyに内容を設定しました (fill)")
+                        return True
                     else:
-                        logger.warning(f"nicEditのiframe ({iframe_selector}) が見つかりません。通常のテキストエリアとして操作を試みます。")
-                        # 定数を使用
-                        self.page.fill(self._BLOG_FORM_CONTENT_TEXTAREA, content)
-                        logger.info(f"{self._BLOG_FORM_CONTENT_TEXTAREA} に内容を設定しました")
-                    return True
-                except Exception as inner_e:
-                    logger.error(f"代替方法での本文設定中にエラー: {inner_e}", exc_info=True); return False
+                        # === さらに代替手段 ===
+                        logger.warning(f"nicEditのiframe ({iframe_selector}) が見つかりません。さらに代替手段 (textarea fill) を試みます。")
+                        try:
+                            textarea_selector = self._BLOG_FORM_CONTENT_TEXTAREA
+                            self.page.fill(textarea_selector, content)
+                            logger.info(f"さらに代替手段: {textarea_selector} に内容を設定しました (textarea fill)")
+                            return True
+                        except Exception as textarea_err:
+                            logger.error(f"さらに代替手段 (textarea fill) でのエラー: {textarea_err}", exc_info=True)
+                            return False
+                except Exception as iframe_err:
+                    logger.error(f"代替手段 (iframe fill) でのエラー: {iframe_err}", exc_info=True)
+                    return False
+
         except Exception as e:
-            logger.error(f"リッチテキストエディタの操作中にエラーが発生しました: {e}", exc_info=True); return False
+            logger.error(f"set_rich_text_content全体でエラーが発生しました: {e}", exc_info=True)
+            return False
 
     def upload_image(self, image_path):
         """画像をアップロードする"""
