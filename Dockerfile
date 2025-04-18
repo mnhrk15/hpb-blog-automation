@@ -37,5 +37,6 @@ EXPOSE 8000
 # Gunicorn WSGIサーバーを使ってFlaskアプリケーションを起動
 # -w 2: ワーカプロセスの数 (CPUコア数などに応じて調整)
 # --bind 0.0.0.0:8000: 全てのネットワークインターフェースのポート8000で待機
+# --timeout 120: ワーカのタイムアウトを120秒に延長
 # app:create_app(): app/__init__.py 内の create_app ファクトリ関数を呼び出す
-CMD ["gunicorn", "--workers", "2", "--bind", "0.0.0.0:8000", "app:create_app()"]
+CMD ["gunicorn", "--workers", "2", "--bind", "0.0.0.0:8000", "--timeout", "120", "app:create_app()"]
