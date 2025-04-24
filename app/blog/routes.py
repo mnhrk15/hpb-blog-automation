@@ -1,5 +1,6 @@
 import os
 import logging
+import json
 from flask import render_template, redirect, url_for, request, flash, current_app, session, jsonify
 from app.blog import bp
 from app.auth.routes import login_required
@@ -153,19 +154,49 @@ def generate_content():
         return redirect(url_for('blog.generate'))
     
     try:
-        # ブログコンテンツを生成
+        # ヘアスタイル情報を取得
+        hair_info = session.get(HAIR_INFO_KEY, {})
+        
+        # ブログコンテンツを生成（構造化データ形式）
+        logger.info("構造化ブログデータの生成を開始します")
         generator = BlogGenerator()
-        content = generator.generate_blog_from_images(uploaded_images)
+        content = generator.generate_structured_blog_from_images(uploaded_images, hair_info)
         
-        if not content:
-            flash('ブログ内容の生成に失敗しました。もう一度お試しください。', 'error')
-            return redirect(url_for('blog.generate'))
+        if not content or not content.get('title'):
+            logger.warning("構造化データ生成に失敗したため、従来の方法にフォールバックします")
+            # 従来の方法で生成を試みる
+            content = generator.generate_blog_from_images(uploaded_images)
+            if not content:
+                flash('ブログ内容の生成に失敗しました。もう一度お試しください。', 'error')
+                return redirect(url_for('blog.generate'))
         
+        # 構造化データの詳細をログ出力
+        try:
+            logger.debug(f"構造化データ: {json.dumps(content, ensure_ascii=False)[:500]}...")
+        except Exception as json_err:
+            logger.error(f"構造化データのJSONシリアライズエラー: {json_err}")
+            
+        # 構造化データから従来形式への変換（互換性のため）
+        if 'sections' in content and isinstance(content['sections'], list):
+            combined_text = ""
+            for section in content['sections']:
+                if section.get('type') == 'text':
+                    combined_text += section.get('content', '') + "\n\n"
+            
+            # 従来の形式で上書き
+            content['content'] = combined_text.strip()
+            logger.info(f"構造化データから変換した従来形式のコンテンツ: {len(content['content'])}文字")
+        elif 'content' not in content or not content['content']:
+            # contentキーがない場合、空文字列を設定
+            content['content'] = ""
+            logger.warning("生成されたコンテンツが空です")
+
         # 生成したコンテンツをセッションに保存
         session[GENERATED_CONTENT_KEY] = content
+        logger.info(f"ブログ内容生成成功: タイトル '{content.get('title')}', コンテンツ長: {len(content.get('content', ''))}文字, セクション数: {len(content.get('sections', []))}")
         flash('ブログ内容を生成しました', 'success')
     except Exception as e:
-        logger.error(f"ブログ生成エラー: {str(e)}")
+        logger.error(f"ブログ生成エラー: {str(e)}", exc_info=True)
         flash(f'ブログ内容の生成中にエラーが発生しました: {str(e)}', 'error')
     
     return redirect(url_for('blog.generate'))
@@ -337,14 +368,28 @@ def post_to_salon_board():
     image_full_paths = [os.path.join(current_app.config['UPLOAD_FOLDER'], img) for img in uploaded_images]
     
     # ブログデータの作成
-    blog_data = {
-        'title': generated_content['title'],
-        'content': generated_content['content'],
-        'stylist_id': stylist_id,
-        'image_paths': image_full_paths,
-        'coupon_names': coupon_names_list,
-        'template': template
-    }
+    # 構造化形式か従来形式かを確認
+    if 'sections' in generated_content and isinstance(generated_content['sections'], list):
+        logger.info(f"構造化データ形式でブログを投稿します。セクション数: {len(generated_content['sections'])}")
+        blog_data = {
+            'title': generated_content['title'],
+            'sections': generated_content['sections'],  # 構造化データ
+            'stylist_id': stylist_id,
+            'image_paths': image_full_paths,
+            'coupon_names': coupon_names_list,
+            'template': template
+        }
+    else:
+        # 従来形式 (フォールバック対応)
+        logger.info("従来のデータ形式でブログを投稿します")
+        blog_data = {
+            'title': generated_content['title'],
+            'content': generated_content['content'],
+            'stylist_id': stylist_id,
+            'image_paths': image_full_paths,
+            'coupon_names': coupon_names_list,
+            'template': template
+        }
     
     # ログイン情報と選択内容をセッションに保存（キーと値を変更）
     session[SALON_BOARD_USER_ID_KEY] = user_id
