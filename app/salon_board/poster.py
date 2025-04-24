@@ -463,15 +463,20 @@ class SalonBoardPoster:
             escaped_selector = selector.replace('"', '\\\\"')
             js_script = f"""
             (function() {{
-                var el = document.querySelector("{escaped_selector}");
-                if (el) {{
-                    el.value = "{value}";
-                    var event = new Event('input', {{ bubbles: true }});
-                    el.dispatchEvent(event);
-                    return true;
+                try {{
+                    var el = document.querySelector("{escaped_selector}");
+                    if (el) {{
+                        el.value = "{value}";
+                        var event = new Event('input', {{ bubbles: true }});
+                        el.dispatchEvent(event);
+                        return true;
+                    }}
+                    return false;
+                }} catch(e) {{
+                    console.error('値設定エラー:', e);
+                    return false;
                 }}
-                return false;
-            }})()
+            }})();
             """
             result = self.page.evaluate(js_script)
             if result:
@@ -482,6 +487,119 @@ class SalonBoardPoster:
             logger.warning(f"JavaScriptによる値設定中にエラー: {e}")
             return False
             
+    def _set_cursor_at_end(self):
+        """nicEditエディタのカーソルを最後に移動する"""
+        try:
+            js_script = """
+            (function() {
+                try {
+                    var editorInstance = nicEditors.findEditor('blogContents');
+                    if (editorInstance) {
+                        var editor = editorInstance.elm;
+                        // カーソルを最後に移動
+                        var range = document.createRange();
+                        range.selectNodeContents(editor);
+                        range.collapse(false); // false = 末尾に移動
+                        var selection = window.getSelection();
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+                        editor.focus();
+                        console.log('カーソルをエディタの最後に移動しました');
+                        return true;
+                    }
+                    console.error('nicEditエディタインスタンスが見つかりません');
+                    return false;
+                } catch(e) {
+                    console.error('カーソル制御エラー:', e);
+                    return false;
+                }
+            })();
+            """
+            result = self.page.evaluate(js_script)
+            if result:
+                logger.info("nicEditエディタのカーソルを最後に移動しました")
+            else:
+                logger.warning("nicEditエディタのカーソル移動に失敗しました")
+            return result
+        except Exception as e:
+            logger.error(f"カーソル制御中にエラーが発生しました: {e}", exc_info=True)
+            return False
+            
+    def _ensure_cursor_at_end(self, max_retries=3):
+        """カーソルが確実に最後に位置するように複数回試行する強化メソッド"""
+        try:
+            # まず線形テキストを挿入してカーソル位置を確実に最後にする
+            js_script = """
+            (function() {
+                try {
+                    var editorInstance = nicEditors.findEditor('blogContents');
+                    if (editorInstance) {
+                        var editor = editorInstance.elm;
+                        var selection = window.getSelection();
+                        
+                        // まずカーソルを最後に移動
+                        var range = document.createRange();
+                        range.selectNodeContents(editor);
+                        range.collapse(false);
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+                        editor.focus();
+                        
+                        // 安定性向上のために、急ぎすぎる操作を避ける
+                        setTimeout(function() {
+                            // 必要ならば非表示のマーカーテキストを挿入してカーソル位置を安定させる
+                            var div = document.createElement('div');
+                            div.appendChild(document.createTextNode('\u200B')); // ゼロ幅スペース
+                            
+                            // 現在のカーソル位置に挿入
+                            range = selection.getRangeAt(0);
+                            range.insertNode(div);
+                            
+                            // 後続の操作のために、再度カーソルを位置づけ
+                            range = document.createRange();
+                            range.selectNodeContents(editor);
+                            range.collapse(false);
+                            selection.removeAllRanges();
+                            selection.addRange(range);
+                            
+                            console.log('強化されたカーソル設定が成功しました');
+                        }, 100);
+                        
+                        return true;
+                    }
+                    console.error('nicEditエディタインスタンスが見つかりません');
+                    return false;
+                } catch(e) {
+                    console.error('強化カーソル制御エラー:', e);
+                    return false;
+                }
+            })();
+            """
+            
+            success = False
+            for attempt in range(max_retries):
+                try:
+                    logger.info(f"強化カーソル制御: 試行 {attempt+1}/{max_retries}")
+                    result = self.page.evaluate(js_script)
+                    
+                    if result:
+                        # JavaScriptが実行される時間を確保
+                        time.sleep(0.3)
+                        success = True
+                        logger.info("強化カーソル制御が成功しました")
+                        break
+                    else:
+                        logger.warning(f"強化カーソル制御の試行 {attempt+1} が失敗しました")
+                        # 失敗した場合は少し待機してから再試行
+                        time.sleep(0.5)
+                except Exception as e:
+                    logger.error(f"強化カーソル制御の試行 {attempt+1} で例外発生: {e}")
+                    time.sleep(0.5)
+            
+            return success
+        except Exception as e:
+            logger.error(f"強化カーソル制御でエラーが発生しました: {e}", exc_info=True)
+            return False
     def _click_element(self, selector: str, timeout: int = 10000, scroll_if_needed: bool = True) -> bool:
         """指定されたセレクタの要素をクリックする (Locator優先、JSフォールバック付き)"""
         try:
@@ -718,14 +836,92 @@ class SalonBoardPoster:
         except Exception as e:
             logger.error(f"set_rich_text_content全体でエラーが発生しました: {e}", exc_info=True)
             return False
-
-    def upload_image(self, image_path):
-        """画像をアップロードする"""
+            
+    def append_rich_text_content(self, content):
+        """nicEditリッチテキストエディタに既存のコンテンツに追加する"""
         try:
+            # エスケープ処理
+            escaped_content = json.dumps(content)[1:-1]
+            
+            # JavaScriptのテンプレート - 既存のコンテンツに追加
+            js_script_template = """
+(function() {{ // Escaped
+try {{     // Escaped
+    var editorInstance = nicEditors.findEditor('blogContents');
+    if (editorInstance) {{ // Escaped
+        var currentContent = editorInstance.getContent();
+        editorInstance.setContent(currentContent + `{0}`);
+        return true;
+    }} else {{            // Escaped
+        console.error('nicEdit editor instance not found for blogContents');
+        return false;
+    }}                 // Escaped
+}} catch(e) {{        // Escaped
+    console.error('nicEdit操作エラー:', e);
+    return false;
+}}                 // Escaped
+}})()                // Escaped
+"""
+            js_script = js_script_template.format(escaped_content)
+            
+            logger.debug("Executing nicEdit append script...")
+            result = self.page.evaluate(js_script)
+            
+            if result:
+                logger.info("JavaScriptを使用してnicEditに内容を追加しました")
+                return True
+            else:
+                # === 代替手段 ===
+                logger.warning("JavaScriptを使用したnicEditへの内容追加に失敗。既存の内容を取得し、結合する代替手段を試みます。")
+                try:
+                    # 現在の内容を取得するスクリプト
+                    get_content_script = """
+(function() {
+    try {
+        var editorInstance = nicEditors.findEditor('blogContents');
+        if (editorInstance) {
+            return editorInstance.getContent();
+        } else {
+            return null;
+        }
+    } catch(e) {
+        console.error('nicEdit内容取得エラー:', e);
+        return null;
+    }
+})();
+"""
+                    current_content = self.page.evaluate(get_content_script)
+                    if current_content is not None:
+                        # 内容を結合して設定
+                        return self.set_rich_text_content(current_content + content)
+                    else:
+                        logger.error("現在のエディタ内容の取得に失敗しました")
+                        return False
+                except Exception as get_err:
+                    logger.error(f"代替手段での内容追加に失敗: {get_err}", exc_info=True)
+                    return False
+        except Exception as e:
+            logger.error(f"append_rich_text_content全体でエラーが発生しました: {e}", exc_info=True)
+            return False
+
+    def upload_image(self, image_path, set_cursor_end=True):
+        """画像をアップロードする
+        
+        Args:
+            image_path (str): アップロードする画像のパス
+            set_cursor_end (bool): カーソルを最後に設定するかどうか（デフォルトはTrue）
+        """
+        try:
+            # カーソル位置を最後に設定してから画像をアップロード
+            if set_cursor_end:
+                logger.info("カーソル位置を最後に設定します")
+                if not self._set_cursor_at_end():
+                    logger.warning("カーソル位置の設定に失敗しました。画像が先頭に挿入される可能性があります。")
+            
             # 定数を使用
             logger.info("画像アップロードボタンをクリックします")
             self.page.click(self._BLOG_FORM_IMAGE_UPLOAD_BTN)
-            
+                
             try:
                 logger.info("画像アップロードモーダルの表示を待機します")
                 # 定数を使用
@@ -759,6 +955,20 @@ class SalonBoardPoster:
             
             logger.info("モーダルが閉じるのを待機します")
             time.sleep(3)
+            
+            # 画像挿入後にカーソル位置がリセットされるため、強化された方法で再度最後に設定
+            if set_cursor_end:
+                logger.info("画像挿入後にカーソルを強化方式で最後に移動します")
+                time.sleep(0.5)  # DOM更新を待つ
+                
+                # 強化カーソル制御を使用
+                if not self._ensure_cursor_at_end(max_retries=2):
+                    # 失敗した場合は当初の方法にフォールバック
+                    logger.warning("強化カーソル制御が失敗したため、通常の方法にフォールバックします")
+                    self._set_cursor_at_end()
+                
+                time.sleep(0.5)  # カーソル移動の安定を待つ
+            
             return True
             
         except Exception as e:
@@ -916,15 +1126,166 @@ class SalonBoardPoster:
             self.page.select_option(self._BLOG_FORM_CATEGORY_SELECT, "BL02") # カテゴリIDは固定値のまま
             self.page.fill(self._BLOG_FORM_TITLE_INPUT, blog_data['title'])
             
-            full_content = blog_data['content']
-            if blog_data.get('template'): full_content += "\\n\\n" + blog_data['template']
-            if not self.set_rich_text_content(full_content): return False
+            # 構造化データ（sections）がある場合、それに基づいて処理
+            if 'sections' in blog_data and isinstance(blog_data['sections'], list) and len(blog_data['sections']) > 0:
+                logger.info("構造化データ（sections）に基づいてコンテンツを処理します")
+                
+                # 最初は空のコンテンツで初期化
+                if not self.set_rich_text_content(""): 
+                    logger.error("初期化用の空コンテンツの設定に失敗しました")
+                    return False
+                
+                # 「フラグメント挿入アプローチ」: nicEditのDOMを直接操作
+                logger.info("フラグメント挿入アプローチを実行します")
+                
+                # エディタを初期化
+                if not self.set_rich_text_content(""):
+                    logger.error("初期化用の空コンテンツ設定に失敗しました")
+                    return False
+                
+                # まずセクションを処理可能な形式に変換
+                sections_to_process = []
+                for i, section in enumerate(blog_data['sections']):
+                    if not isinstance(section, dict):
+                        continue
+                    
+                    section_type = section.get('type')
+                    if section_type in ['text', 'image']:
+                        sections_to_process.append({
+                            'type': section_type,
+                            'data': section,
+                            'original_index': i
+                        })
+                
+                logger.info(f"フラグメント挿入アプローチ: 合計 {len(sections_to_process)} 個のセクションを処理します")
+                
+                # この方法では一つずつセクションを処理し、毎回コンテンツ全体を再構成
+                current_content = ""
+                
+                for idx, section_data in enumerate(sections_to_process):
+                    section_type = section_data['type']
+                    section = section_data['data']
+                    
+                    # 前のセクションとの間に空行を入れる（最初のセクション以外）
+                    if idx > 0 and current_content:
+                        current_content += "<div><br></div>\n"
+                    
+                    if section_type == 'text':
+                        # テキストセクションの処理
+                        content = section.get('content', '')
+                        if content and len(content.strip()) > 0:
+                            logger.info(f"テキストセクション {idx+1} を追加: {content[:30]}...")
+                            formatted_content = f"<div>{content}</div>"
+                            current_content += formatted_content
+                    
+                    elif section_type == 'image':
+                        # 画像セクションの処理
+                        try:
+                            image_index = section.get('imageIndex', 0)
+                            if not isinstance(image_index, int):
+                                try:
+                                    image_index = int(image_index)
+                                except (ValueError, TypeError):
+                                    logger.error(f"無効な画像インデックス: {image_index}")
+                                    image_index = 0
+                            
+                            if blog_data.get('image_paths') and 0 <= image_index < len(blog_data['image_paths']):
+                                image_path = blog_data['image_paths'][image_index]
+                                logger.info(f"画像セクション {idx+1} を処理: {image_path}")
+                                
+                                # 現在のコンテンツを一度保存
+                                if not self.set_rich_text_content(current_content):
+                                    logger.warning(f"中間コンテンツの設定に失敗しました")
+                                    continue
+                                time.sleep(1.0)  # DOM更新の安定化待機
+                                
+                                # 画像のみを挿入（現在の内容はすでに保存済み）
+                                if not self.upload_image(image_path, set_cursor_end=True):
+                                    logger.warning(f"画像アップロード失敗: {image_path}")
+                                    continue
+                                
+                                # 画像挿入後の処理
+                                time.sleep(2.0)  # 画像アップロード完了まで待機
+                                
+                                # エディタの現在の内容を取得
+                                js_get_content = """
+                                (function() {
+                                    try {
+                                        var editorInstance = nicEditors.findEditor('blogContents');
+                                        if (editorInstance) {
+                                            return editorInstance.getContent();
+                                        }
+                                        return "";
+                                    } catch(e) {
+                                        console.error('コンテンツ取得エラー:', e);
+                                        return "";
+                                    }
+                                })();
+                                """
+                                editor_content = self.page.evaluate(js_get_content)
+                                
+                                # 挿入された画像を探して保存
+                                if editor_content:
+                                    # 先頭の画像を探す（nicEditは画像を先頭に挿入する）
+                                    import re
+                                    img_match = re.search(r'<img[^>]+>', editor_content)
+                                    
+                                    if img_match:
+                                        # 画像タグを抽出
+                                        img_tag = img_match.group(0)
+                                        
+                                        # 後でdivで包む
+                                        img_div = f"<div>{img_tag}</div>"
+                                        
+                                        # 画像タグを除いた残りのコンテンツ
+                                        # （先頭の画像を除去し、必要な部分だけ保持）
+                                        remaining_content = editor_content.replace(img_tag, "", 1)
+                                        
+                                        # 現在のテキストに画像を追加
+                                        current_content += img_div
+                                        
+                                        # 元のコンテンツを復元（画像は保持済み）
+                                        if not self.set_rich_text_content(current_content):
+                                            logger.warning("コンテンツの再構成に失敗しました")
+                                    else:
+                                        logger.warning("挿入された画像タグが見つかりませんでした")
+                                else:
+                                    logger.warning("エディタから内容を取得できませんでした")
+                            else:
+                                logger.warning(f"指定された画像が見つかりません: index {image_index}")
+                        except Exception as img_err:
+                            logger.error(f"画像処理エラー: {img_err}", exc_info=True)
+                    
+                    # 各セクション処理後の安定化待機
+                    time.sleep(1.0)
+                
+                # 最終的なコンテンツをセット
+                if current_content and not self.set_rich_text_content(current_content):
+                    logger.warning("最終コンテンツの設定に失敗しました")
+                    
+                logger.info("フラグメント挿入アプローチによる処理が完了しました")
+                
+                # テンプレートがあれば追加
+                if blog_data.get('template'):
+                    logger.info("テンプレートを追加します")
+                    if not self.append_rich_text_content("\n\n" + blog_data['template']):
+                        logger.warning("テンプレート追加中にエラーが発生しました")
             
-            if blog_data.get('image_paths'):
-                for image_path in blog_data['image_paths']:
-                    if not self.upload_image(image_path):
-                        logger.warning(f"画像 '{image_path}' のアップロードに失敗しました。続行します。")
+            else:
+                # 従来の方法（フォールバック）
+                logger.info("従来の方法でコンテンツを設定します（構造化データなし）")
+                full_content = blog_data['content']
+                if blog_data.get('template'): full_content += "\n\n" + blog_data['template']
+                if not self.set_rich_text_content(full_content): return False
+                
+                # 画像をアップロード
+                if blog_data.get('image_paths'):
+                    for image_path in blog_data['image_paths']:
+                        # カーソル位置を最後に設定してから画像をアップロード
+                        if not self.upload_image(image_path, set_cursor_end=True):
+                            logger.warning(f"画像 '{image_path}' のアップロードに失敗しました。続行します。")
             
+            # クーポン設定
             if blog_data.get('coupon_names') and len(blog_data['coupon_names']) > 0:
                 if not self.select_coupon(blog_data['coupon_names']): return False
             
