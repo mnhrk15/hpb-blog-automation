@@ -96,6 +96,11 @@ class BlogGenerator:
             # 構造化プロンプトを使用
             prompt = STRUCTURED_BLOG_PROMPT
             
+            # ヘアスタイル情報がある場合、プロンプトを拡張
+            if hair_info and isinstance(hair_info, dict) and len(hair_info) > 0:
+                logger.info("ヘアスタイル情報を使用してプロンプトを拡張します")
+                prompt = self._enhance_prompt_with_hair_info(prompt, hair_info)
+            
             # コンテンツ生成
             logger.info("構造化ブログコンテンツの生成を開始します")
             generated_text = client.generate_content_from_images(image_paths, prompt)
@@ -237,6 +242,53 @@ class BlogGenerator:
             "sections": sections
         }
         
+    def _enhance_prompt_with_hair_info(self, prompt, hair_info):
+        """
+        ヘアスタイル情報を使用してプロンプトを拡張
+        
+        Args:
+            prompt (str): 元のプロンプト
+            hair_info (dict): ヘアスタイル情報
+            
+        Returns:
+            str: 拡張されたプロンプト
+        """
+        # 英語キーと日本語キーの対応を確認
+        hairstyle = hair_info.get('ヘアスタイル') or hair_info.get('hairstyle', '')
+        color = hair_info.get('髪色') or hair_info.get('color', '')
+        features = hair_info.get('特徴') or hair_info.get('features', [])
+        face_shape = hair_info.get('顔型') or hair_info.get('face_shape', '')
+        season = hair_info.get('季節') or hair_info.get('season', '')
+        
+        # 特徴を文字列に変換
+        if isinstance(features, list):
+            features_text = '、'.join(features)
+        else:
+            features_text = str(features)
+        
+        # ヘアスタイル情報テキストを作成
+        hair_info_text = "\n\n--- ヘアスタイル分析情報 ---\n"
+        if hairstyle:
+            hair_info_text += f"ヘアスタイル: {hairstyle}\n"
+        if color:
+            hair_info_text += f"カラー: {color}\n"
+        if features_text:
+            hair_info_text += f"特徴: {features_text}\n"
+        if face_shape:
+            hair_info_text += f"似合う顔型: {face_shape}\n"
+        if season:
+            hair_info_text += f"季節・トレンド: {season}\n"
+        hair_info_text += "\nこの分析情報を参考にして、特徴やカラーを具体的に説明し、読者に分かりやすく伝えてください。\n---\n"
+        
+        # プロンプトの最後（注意事項の前）に挿入
+        if "注意:" in prompt:
+            parts = prompt.split("注意:", 1)
+            enhanced_prompt = parts[0] + hair_info_text + "\n注意:" + parts[1]
+        else:
+            enhanced_prompt = prompt + hair_info_text
+        
+        return enhanced_prompt
+    
     def _process_image_placeholders(self, content, image_count):
         """
         複数画像用の画像プレースホルダを処理
