@@ -247,6 +247,34 @@ def hair_info():
         image_url=image_url
     )
 
+@bp.route('/analyze-hair', methods=['POST'])
+@login_required
+def analyze_hair():
+    # アップロードされた画像をチェック
+    uploaded_images = session.get(UPLOADED_IMAGES_KEY, [])
+    if not uploaded_images:
+        flash('最初に画像をアップロードしてください', 'error')
+        return redirect(url_for('blog.index'))
+    
+    try:
+        # 最初の画像からヘアスタイル情報を抽出
+        extractor = HairStyleExtractor()
+        hair_info = extractor.extract_hair_info(uploaded_images[0])
+        
+        if hair_info:
+            # 抽出成功
+            session[HAIR_INFO_KEY] = hair_info
+            logger.info(f"ヘアスタイル情報を抽出しました: {hair_info}")
+            flash('ヘアスタイルの分析が完了しました', 'success')
+        else:
+            # 抽出結果が空
+            flash('ヘアスタイルの特徴を検出できませんでした。別の画像をお試しください。', 'warning')
+    except Exception as e:
+        logger.error(f"ヘアスタイル情報抽出エラー: {str(e)}")
+        flash(f'ヘアスタイルの分析中にエラーが発生しました: {str(e)}', 'error')
+    
+    return redirect(url_for('blog.generate'))
+
 @bp.route('/fetch-salon-info', methods=['POST'])
 @login_required
 def fetch_salon_info():

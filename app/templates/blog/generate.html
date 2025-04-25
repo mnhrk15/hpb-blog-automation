@@ -72,6 +72,69 @@
         {% endif %}
     </div>
 
+    <!-- ヘアスタイル分析結果 -->
+    {% if hair_info and hair_info|length > 0 %}
+    <div class="simple-card">
+        <div class="card-title">
+            <h3><i class="bi bi-scissors"></i> ヘアスタイル分析結果</h3>
+        </div>
+        <div class="card-body">
+            <table class="table">
+                <tbody>
+                    {% if hair_info.hairstyle or hair_info.ヘアスタイル %}
+                    <tr>
+                        <th>ヘアスタイル</th>
+                        <td>{{ hair_info.ヘアスタイル or hair_info.hairstyle }}</td>
+                    </tr>
+                    {% endif %}
+                    
+                    {% if hair_info.color or hair_info.髪色 %}
+                    <tr>
+                        <th>カラー</th>
+                        <td>{{ hair_info.髪色 or hair_info.color }}</td>
+                    </tr>
+                    {% endif %}
+                    
+                    {% if hair_info.features or hair_info.特徴 %}
+                    <tr>
+                        <th>特徴</th>
+                        <td>
+                            {% set features = hair_info.特徴 or hair_info.features %}
+                            {% if features is string %}
+                                {{ features }}
+                            {% else %}
+                                <ul class="list-unstyled mb-0">
+                                    {% for feature in features %}
+                                        <li>{{ feature }}</li>
+                                    {% endfor %}
+                                </ul>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+                    
+                    {% if hair_info.face_shape or hair_info.顔型 %}
+                    <tr>
+                        <th>似合う顔型</th>
+                        <td>{{ hair_info.顔型 or hair_info.face_shape }}</td>
+                    </tr>
+                    {% endif %}
+                    
+                    {% if hair_info.season or hair_info.季節 %}
+                    <tr>
+                        <th>季節・トレンド</th>
+                        <td>{{ hair_info.季節 or hair_info.season }}</td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+            <div class="text-end">
+                <small class="text-muted">※この情報はブログ生成時に自動的に活用されます</small>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     {% if generated_content %}
     <!-- 2. ブログ内容編集 -->
     <div class="simple-card">
