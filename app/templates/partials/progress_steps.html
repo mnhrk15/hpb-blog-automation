@@ -1,0 +1,31 @@
+{% macro render_progress_steps(active_step) %}
+<div class="progress-steps animate__animated animate__fadeIn">
+    <div class="step {% if active_step >= 1 %}active{% endif %} {% if active_step > 1 %}completed{% endif %}">
+        <div class="step-icon">
+            {% if active_step > 1 %}<i class="bi bi-check-lg"></i>{% else %}<i class="bi bi-images"></i>{% endif %}
+        </div>
+        <div class="step-label">画像アップロード</div>
+    </div>
+    
+    <div class="step {% if active_step >= 2 %}active{% endif %} {% if active_step > 2 %}completed{% endif %}">
+        <div class="step-icon">
+            {% if active_step > 2 %}<i class="bi bi-check-lg"></i>{% else %}<i class="bi bi-scissors"></i>{% endif %}
+        </div>
+        <div class="step-label">ヘアスタイル分析</div>
+    </div>
+    
+    <div class="step {% if active_step >= 3 %}active{% endif %} {% if active_step > 3 %}completed{% endif %}">
+        <div class="step-icon">
+            {% if active_step > 3 %}<i class="bi bi-check-lg"></i>{% else %}<i class="bi bi-pencil-square"></i>{% endif %}
+        </div>
+        <div class="step-label">ブログ生成</div>
+    </div>
+    
+    <div class="step {% if active_step >= 4 %}active{% endif %} {% if active_step > 4 %}completed{% endif %}">
+        <div class="step-icon">
+            {% if active_step > 4 %}<i class="bi bi-check-lg"></i>{% else %}<i class="bi bi-send"></i>{% endif %}
+        </div>
+        <div class="step-label">サロンボード投稿</div>
+    </div>
+</div>
+{% endmacro %}
