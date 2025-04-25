@@ -29,6 +29,7 @@ SALON_BOARD_STYLIST_ID_KEY = 'salon_board_stylist_id'
 SELECTED_COUPON_NAME_KEY = 'selected_coupon_name'
 SUCCESS_SCREENSHOT_KEY = 'success_screenshot'
 ROBOT_DETECTED_KEY = 'robot_detected'
+POST_SUCCESS_KEY = 'post_success'
 
 @bp.route('/')
 @login_required
@@ -45,7 +46,7 @@ def index():
     if ROBOT_DETECTED_KEY in session:
         session.pop(ROBOT_DETECTED_KEY)
     
-    return render_template('blog/index.html')
+    return render_template('blog/index.html', active_step=1)
 
 @bp.route('/upload', methods=['POST'])
 @login_required
@@ -124,6 +125,17 @@ def generate():
         # ファイル名だけを取得して画像URLを生成
         success_screenshot = url_for('uploaded_file', filename=os.path.basename(screenshot_path))
     
+    # プログレスステップの状態を決定
+    if session.get(POST_SUCCESS_KEY, False):
+        # 投稿成功時はステップ4
+        active_step = 4
+    elif generated_content:
+        # コンテンツ生成済みはステップ3
+        active_step = 3
+    else:
+        # ヘアスタイル分析までならステップ2
+        active_step = 2
+    
     return render_template(
         'blog/generate.html', 
         image_urls=image_urls,
@@ -133,7 +145,8 @@ def generate():
         stylists=stylists,
         coupons=coupons,
         selected_template=selected_template,
-        success_screenshot=success_screenshot # スクリーンショットを追加
+        success_screenshot=success_screenshot,
+        active_step=active_step
     )
 
 @bp.route('/generate-content', methods=['POST', 'GET'])
@@ -272,6 +285,47 @@ def analyze_hair():
     except Exception as e:
         logger.error(f"ヘアスタイル情報抽出エラー: {str(e)}")
         flash(f'ヘアスタイルの分析中にエラーが発生しました: {str(e)}', 'error')
+    
+    return redirect(url_for('blog.generate'))
+
+@bp.route('/save-hair-info', methods=['POST'])
+@login_required
+def save_hair_info():
+    """ヘアスタイル情報の編集内容を保存する"""
+    # 現在のヘアスタイル情報を取得
+    hair_info = session.get(HAIR_INFO_KEY, {})
+    if not hair_info:
+        hair_info = {}
+    
+    # フォームからの入力を取得
+    hairstyle = request.form.get('hairstyle', '').strip()
+    color = request.form.get('color', '').strip()
+    features_text = request.form.get('features', '').strip()
+    face_shape = request.form.get('face_shape', '').strip()
+    season = request.form.get('season', '').strip()
+    
+    # 特徴をリストに変換
+    features = []
+    if features_text:
+        features = [f.strip() for f in features_text.split(',')]
+        features = [f for f in features if f]  # 空の要素を除外
+    
+    # 日本語キーと英語キーの両方を更新
+    hair_info['hairstyle'] = hairstyle
+    hair_info['ヘアスタイル'] = hairstyle
+    hair_info['color'] = color
+    hair_info['髪色'] = color
+    hair_info['features'] = features
+    hair_info['特徴'] = features
+    hair_info['face_shape'] = face_shape
+    hair_info['顔型'] = face_shape
+    hair_info['season'] = season
+    hair_info['季節'] = season
+    
+    # セッションに保存
+    session[HAIR_INFO_KEY] = hair_info
+    logger.info(f"ヘアスタイル情報を更新しました: {hair_info}")
+    flash('ヘアスタイル情報を保存しました', 'success')
     
     return redirect(url_for('blog.generate'))
 
@@ -447,11 +501,13 @@ def post_to_salon_board():
                 # スクリーンショットパスをセッションに保存
                 session[SUCCESS_SCREENSHOT_KEY] = result.get('screenshot_path')
                 session[ROBOT_DETECTED_KEY] = False
+                session[POST_SUCCESS_KEY] = True  # 投稿成功フラグをセット
                 flash('サロンボードへのブログ投稿が完了しました', 'success')
                 success = True
         elif result:
             # 単なる True の場合（スクリーンショットなし)
             session[ROBOT_DETECTED_KEY] = False
+            session[POST_SUCCESS_KEY] = True  # 投稿成功フラグをセット
             flash('サロンボードへのブログ投稿が完了しました', 'success')
             success = True
         else:

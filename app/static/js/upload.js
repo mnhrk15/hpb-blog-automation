@@ -201,13 +201,23 @@ document.addEventListener('DOMContentLoaded', function() {
      * ローディング表示関数
      */
     function showLoading() {
+        // 既存のローディングオーバーレイがあれば作成しない
+        if (document.querySelector('.loading-overlay')) {
+            return;
+        }
+        
         const overlay = document.createElement('div');
         overlay.className = 'loading-overlay';
         
         const spinner = document.createElement('div');
         spinner.className = 'loading-spinner';
         
+        const loadingText = document.createElement('div');
+        loadingText.className = 'loading-text';
+        loadingText.textContent = '処理中...';
+        
         overlay.appendChild(spinner);
+        overlay.appendChild(loadingText);
         document.body.appendChild(overlay);
     }
 }); 

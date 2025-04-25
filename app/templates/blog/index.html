@@ -32,6 +32,9 @@
         </div>
     </div>
 
+    {% from 'partials/progress_steps.html' import render_progress_steps %}
+    {{ render_progress_steps(active_step) }}
+
     <div class="simple-card animate__animated animate__fadeInUp">
         <div class="card-title">
             <h3><i class="bi bi-cloud-upload"></i> 画像アップロード</h3>
