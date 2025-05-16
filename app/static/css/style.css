@@ -249,18 +249,19 @@ body {
 
 /* アップロード領域 */
 .upload-area {
-    border: 2px dashed #3498db;
-    border-radius: 12px;
-    padding: 30px;
+    border: 2px dashed #007bff;
+    border-radius: 10px;
+    padding: 40px 20px;
     text-align: center;
-    margin-bottom: 20px;
-    transition: all 0.3s;
-    background-color: #f8fafd;
     cursor: pointer;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
+    transition: all 0.3s ease;
+    background-color: #f8f9fc;
+    position: relative;
+}
+
+.upload-area.disabled {
+    pointer-events: none;
+    opacity: 0.7;
 }
 
 .upload-icon {
