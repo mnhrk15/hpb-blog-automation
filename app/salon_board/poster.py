@@ -44,6 +44,10 @@ class SalonBoardPoster:
     _BLOG_CONFIRM_BTN = "a#confirm"
     _BLOG_UNREFLECT_BTN = "a#unReflect"
     _BLOG_BACK_BTN = "a#back"
+    _BLOG_REFLECT_BTN = "a#reflect" # 追加
+
+    # 失敗時のスクリーンショットファイル名プレフィックス
+    _FAILURE_SCREENSHOT_PREFIX = "failure_screenshot_"
 
     _ROBOT_SELECTORS = [
         "iframe[src*='recaptcha']",
@@ -70,14 +74,66 @@ class SalonBoardPoster:
     ]
     # --- セレクタ定義 終了 ---
 
-    def __init__(self, headless=True, slow_mo=100):
+    # --- エラータイプ定数 ---
+    ET_INIT_FAILED = 'initialization_failed'
+    ET_BROWSER_START_FAILED = 'browser_start_failed' # startメソッド内で使用する可能性
+
+    ET_LOGIN_GENERAL = 'login_general_error'
+    ET_LOGIN_ROBOT_DETECTED = 'login_robot_detected'
+    ET_LOGIN_DASHBOARD_TIMEOUT = 'login_dashboard_timeout'
+    ET_LOGIN_EXCEPTION = 'login_exception'
+
+    ET_NAV_GENERAL = 'navigation_general_error'
+    ET_NAV_KEISAI_KANRI_FAILED = 'navigation_keisai_kanri_failed'
+    ET_NAV_ROBOT_DETECTED = 'navigation_robot_detected' # 掲載管理、ブログ管理、新規投稿ページ共通
+    ET_NAV_BLOG_FAILED = 'navigation_blog_failed'
+    ET_NAV_NEW_POST_FAILED = 'navigation_new_post_failed'
+    ET_NAV_FORM_VISIBLE_TIMEOUT = 'navigation_form_visible_timeout'
+    ET_NAV_UNEXPECTED_ERROR = 'navigation_unexpected_error'
+    ET_NAV_MAX_RETRIES_REACHED = 'navigation_max_retries_reached'
+
+    ET_POST_BLOG_GENERAL = 'post_blog_general_error'
+    ET_POST_STYLIST_SELECTION_FAILED = 'post_stylist_selection_failed'
+    ET_POST_CONTENT_INIT_FAILED = 'post_content_initialization_failed'
+    ET_POST_CONTENT_REINIT_FAILED = 'post_content_reinitialization_failed'
+    ET_POST_IMAGE_UPLOAD_FAILED = 'post_image_upload_failed' # 追加 (post_blog内で使用検討)
+    ET_POST_FINAL_CONTENT_SETTING_FAILED = 'post_final_content_setting_failed'
+    ET_POST_LEGACY_CONTENT_SETTING_FAILED = 'post_legacy_content_setting_failed'
+    ET_POST_COUPON_SELECTION_FAILED = 'post_coupon_selection_failed'
+    ET_POST_CONFIRM_CLICK_FAILED = 'post_confirm_button_click_failed'
+    ET_POST_CONFIRM_PAGE_TIMEOUT = 'post_confirmation_page_timeout'
+    ET_POST_ROBOT_DETECTED_ON_CONFIRM = 'post_robot_detected_on_confirm'
+    ET_POST_UNREFLECT_CLICK_FAILED = 'post_unreflect_button_click_failed'
+    ET_POST_BACK_BUTTON_CLICK_FAILED = 'post_back_button_click_failed' # 追加 (post_blog内で使用検討)
+    ET_POST_COMPLETE_TIMEOUT = 'post_complete_timeout' # 追加 (post_blog内で使用検討)
+    ET_POST_UNEXPECTED_ERROR = 'post_blog_unexpected_error'
+    
+    ET_EXEC_POST_UNKNOWN_ERROR = 'execute_post_unknown_error'
+
+    # (select_stylist, select_coupon 用に追加予定)
+    ET_STYLIST_SELECT_ELEMENT_NOT_FOUND = 'stylist_select_element_not_found'
+    ET_STYLIST_SELECT_OPTION_FAILED = 'stylist_select_option_failed'
+    ET_STYLIST_SELECT_UNEXPECTED = 'stylist_select_unexpected_error'
+
+    ET_COUPON_BTN_NOT_VISIBLE = 'coupon_button_not_visible'
+    ET_COUPON_BTN_CLICK_FAILED = 'coupon_button_click_failed'
+    ET_COUPON_MODAL_TIMEOUT = 'coupon_modal_timeout'
+    ET_COUPON_SELECTION_ITEM_NOT_FOUND = 'coupon_selection_item_not_found'
+    ET_COUPON_SETTING_BTN_CLICK_FAILED = 'coupon_setting_button_click_failed'
+    ET_COUPON_MODAL_CLOSE_TIMEOUT = 'coupon_modal_close_timeout'
+    ET_COUPON_SELECTION_UNEXPECTED = 'coupon_selection_unexpected_error'
+    # --- エラータイプ定数 終了 ---
+
+    def __init__(self, screenshot_folder_path, headless=True, slow_mo=100):
         """
         初期化メソッド
         
         Args:
+            screenshot_folder_path (str): スクリーンショットの保存先フォルダパス。
             headless (bool): ヘッドレスモードで実行するかどうか。デフォルトはTrue（ヘッドレスモード）。
             slow_mo (int): アクションの間に入れる遅延時間（ミリ秒）。デバッグ時に視認性を高めるため。
         """
+        self.screenshot_folder_path = screenshot_folder_path
         self.headless = headless
         self.slow_mo = slow_mo
         self.playwright = None
@@ -265,8 +321,17 @@ class SalonBoardPoster:
             password (str): サロンボードのパスワード
             
         Returns:
-            bool: ログイン成功でTrue、失敗でFalse
+            dict: ログイン結果 (success: bool, message: str, screenshot_path: str|None, error_type: str|None, robot_detected: bool)
         """
+        default_success_result = {
+            'success': True, 'message': 'ログインに成功しました。', 'screenshot_path': None, 
+            'error_type': None, 'robot_detected': False
+        }
+        default_failure_result = {
+            'success': False, 'message': 'ログインに失敗しました。', 'screenshot_path': None, 
+            'error_type': self.ET_LOGIN_GENERAL, 'robot_detected': False
+        }
+
         try:
             # JavaScript内のセレクタも定数を使うように変更 (f-stringを使用)
             # ウィジェット非表示用JS
@@ -435,23 +500,38 @@ class SalonBoardPoster:
                 # タイムアウト時にも認証確認
                 if self.is_robot_detection_present():
                     logger.error("ダッシュボード表示待機中に画像認証が検出されました。")
-                    self.page.screenshot(path="dashboard_timeout_auth_detected.png")
-                    return False
+                    ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "dash_timeout_robot_")
+                    return {**default_failure_result, 
+                            'message': "ダッシュボード表示待機中にロボット認証が検出されました。", 
+                            'screenshot_path': ss_path, 
+                            'error_type': self.ET_LOGIN_ROBOT_DETECTED, 
+                            'robot_detected': True}
                 
-                self.page.screenshot(path="login_timeout_screenshot.png")
-                return False
+                ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "login_timeout_")
+                return {**default_failure_result, 
+                        'message': f"ログイン後のダッシュボード表示がタイムアウトしました。現在のURL: {current_url}, Title: {current_title}", 
+                        'screenshot_path': ss_path, 
+                        'error_type': self.ET_LOGIN_DASHBOARD_TIMEOUT}
                 
             if self.is_robot_detection_present():
                 logger.error("ログイン後にロボット認証が検出されました。処理を中断します。")
-                return False
+                ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "final_robot_")
+                return {**default_failure_result, 
+                        'message': "ログイン成功後にロボット認証が検出されました。", 
+                        'screenshot_path': ss_path, 
+                        'error_type': self.ET_LOGIN_ROBOT_DETECTED, 
+                        'robot_detected': True}
                 
             logger.info("サロンボードへのログインに成功しました")
-            return True
+            return default_success_result # 修正点: True から default_success_result へ変更
             
         except Exception as e:
-            logger.error(f"ログイン処理中にエラーが発生しました: {e}")
-            self.page.screenshot(path="login_error_screenshot.png")
-            return False
+            logger.error(f"ログイン処理中にエラーが発生しました: {e}", exc_info=True)
+            ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "login_exception_")
+            return {**default_failure_result, 
+                    'message': f"ログイン処理中に予期せぬエラーが発生しました: {str(e)}", 
+                    'screenshot_path': ss_path, 
+                    'error_type': self.ET_LOGIN_EXCEPTION}
             
     def _set_input_value_by_js(self, selector, value):
         """JavaScriptを使用して入力フィールドに値を設定する内部メソッド"""
@@ -686,6 +766,13 @@ class SalonBoardPoster:
 
     def navigate_to_blog_post_page(self):
         """ブログ投稿ページに移動する"""
+        default_success_result = {
+            'success': True, 'message': 'ブログ投稿ページへの移動に成功しました。', 'screenshot_path': None, 'error_type': None
+        }
+        default_failure_result = {
+            'success': False, 'message': 'ブログ投稿ページへの移動に失敗しました。', 'screenshot_path': None, 'error_type': self.ET_NAV_GENERAL
+        }
+
         for attempt in range(self.max_retries):
             try:
                 logger.info(f"ブログ投稿ページへの移動を試行中... (試行 {attempt+1}/{self.max_retries})")
@@ -693,17 +780,25 @@ class SalonBoardPoster:
                 # --- 1. 「掲載管理」をクリックして待機 ---
                 if not self._click_and_wait_navigation(self._NAVI_KEISAI_KANRI):
                     logger.error("「掲載管理」へのナビゲーションに失敗しました。")
-                    # エラーが続く場合はリトライループへ
                     if attempt < self.max_retries - 1:
                         logger.warning(f"リトライします... ({attempt+1}/{self.max_retries})")
                         self._try_recover_and_wait() # 回復試行
                         continue
                     else:
-                        self.page.screenshot(path="keisai_kanri_navigation_error.png"); return False
+                        ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "nav_keisai_")
+                        return {**default_failure_result, 
+                                'message': "「掲載管理」へのナビゲーションに失敗しました。",
+                                'screenshot_path': ss_path,
+                                'error_type': self.ET_NAV_KEISAI_KANRI_FAILED}
                 
                 logger.info("掲載管理ページの読み込み完了。")
                 if self.is_robot_detection_present():
-                    logger.error("掲載管理ページでロボット認証が検出されました。処理を中断します。"); return False
+                    logger.error("掲載管理ページでロボット認証が検出されました。処理を中断します。")
+                    ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "nav_keisai_robot_")
+                    return {**default_failure_result, 
+                            'message': "掲載管理ページでロボット認証が検出されました。",
+                            'screenshot_path': ss_path,
+                            'error_type': self.ET_NAV_ROBOT_DETECTED}
 
                 # --- 2. 「ブログ」をクリックして待機 ---
                 if not self._click_and_wait_navigation(self._NAVI_BLOG):
@@ -713,11 +808,20 @@ class SalonBoardPoster:
                         self._try_recover_and_wait() # 回復試行
                         continue
                     else:
-                        self.page.screenshot(path="blog_navigation_error.png"); return False
+                        ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "nav_blog_")
+                        return {**default_failure_result, 
+                                'message': "「ブログ」管理ページへのナビゲーションに失敗しました。",
+                                'screenshot_path': ss_path,
+                                'error_type': self.ET_NAV_BLOG_FAILED}
                 
                 logger.info("ブログ管理ページの読み込み完了。")
                 if self.is_robot_detection_present():
-                    logger.error("ブログ管理ページでロボット認証が検出されました。処理を中断します。"); return False
+                    logger.error("ブログ管理ページでロボット認証が検出されました。処理を中断します。")
+                    ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "nav_blog_robot_")
+                    return {**default_failure_result, 
+                            'message': "ブログ管理ページでロボット認証が検出されました。",
+                            'screenshot_path': ss_path,
+                            'error_type': self.ET_NAV_ROBOT_DETECTED}
 
                 # --- 3. 「新規投稿」をクリックして待機 ---
                 if not self._click_and_wait_navigation(self._NAVI_NEW_POST):
@@ -727,18 +831,27 @@ class SalonBoardPoster:
                         self._try_recover_and_wait() # 回復試行
                         continue
                     else:
-                        self.page.screenshot(path="new_post_navigation_error.png"); return False
+                        ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "nav_newpost_")
+                        return {**default_failure_result, 
+                                'message': "「新規投稿」ページへのナビゲーションに失敗しました。",
+                                'screenshot_path': ss_path,
+                                'error_type': self.ET_NAV_NEW_POST_FAILED}
                 
                 logger.info("新規投稿ページの読み込み完了。")
                 if self.is_robot_detection_present():
-                    logger.error("新規投稿ページでロボット認証が検出されました。処理を中断します。"); return False
-                    
+                    logger.error("新規投稿ページでロボット認証が検出されました。処理を中断します。")
+                    ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "nav_newpost_robot_")
+                    return {**default_failure_result, 
+                            'message': "新規投稿ページでロボット認証が検出されました。",
+                            'screenshot_path': ss_path,
+                            'error_type': self.ET_NAV_ROBOT_DETECTED}
+
                 # --- 4. ブログ投稿フォームの表示を確認 ---
                 logger.info(f"ブログ投稿フォームの主要素 ({self._BLOG_FORM_STYLIST_SELECT}) を待機します")
                 try:
                     self.page.wait_for_selector(self._BLOG_FORM_STYLIST_SELECT, state="visible", timeout=60000)
                     logger.info("ブログ投稿フォームの表示を確認しました。ナビゲーション成功。")
-                    return True # 全てのステップが成功
+                    return default_success_result
                 except TimeoutError:
                     logger.error("ブログ投稿フォームの表示確認がタイムアウトしました。")
                     if attempt < self.max_retries - 1:
@@ -747,7 +860,11 @@ class SalonBoardPoster:
                         continue
                     else:
                         logger.error(f"ブログ投稿フォームの表示確認が{self.max_retries}回タイムアウトしました。")
-                        self.page.screenshot(path="blog_form_visible_timeout.png"); return False
+                        ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "nav_form_timeout_")
+                        return {**default_failure_result, 
+                                'message': f"ブログ投稿フォームの表示確認が{self.max_retries}回タイムアウトしました。",
+                                'screenshot_path': ss_path,
+                                'error_type': self.ET_NAV_FORM_VISIBLE_TIMEOUT}
 
             except Exception as e:
                 # 予期せぬエラー（クリック失敗、ネットワークエラー以外）
@@ -758,11 +875,23 @@ class SalonBoardPoster:
                     continue
                 else:
                     logger.error(f"ナビゲーション中に{self.max_retries}回予期せぬエラーが発生しました。")
-                    self.page.screenshot(path="navigation_unexpected_error.png"); return False
+                    ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "nav_exception_")
+                    return {**default_failure_result, 
+                            'message': f"ナビゲーション中に{self.max_retries}回予期せぬエラーが発生しました: {str(e)}",
+                            'screenshot_path': ss_path,
+                            'error_type': self.ET_NAV_UNEXPECTED_ERROR}
         
         # ループが完了しても成功しなかった場合
         logger.error("最大再試行回数に達しましたが、ブログ投稿ページへの移動に失敗しました。")
-        return False
+        # この時点で最後に撮影されたスクリーンショットがあればそれを使うか、新たに撮影するか検討。
+        # ここでは、ループ内で最後にエラーになった際の詳細なエラーメッセージとスクリーンショットが返されるはずなので、
+        # ここで改めて default_failure_result を返す必要性は低いかもしれないが、念のため。
+        # ただし、リトライロジックの中で具体的なエラーが返されているので、このパスには到達しづらい。
+        final_ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "nav_max_retries_")
+        return {**default_failure_result, 
+                'message': "最大再試行回数に達しましたが、ブログ投稿ページへの移動に失敗しました。",
+                'screenshot_path': final_ss_path, # ループ内の最後のエラーで撮れていればそれが優先される
+                'error_type': self.ET_NAV_MAX_RETRIES_REACHED}
 
     def _try_recover_and_wait(self, wait_seconds=5):
         """エラー発生時にダッシュボードに戻る試行と待機を行う"""
@@ -910,7 +1039,23 @@ try {{     // Escaped
         Args:
             image_path (str): アップロードする画像のパス
             set_cursor_end (bool): カーソルを最後に設定するかどうか（デフォルトはTrue）
+            
+        Returns:
+            dict: アップロード結果 (success: bool, message: str, screenshot_path: str|None, error_type: str|None)
         """
+        default_success_result = {
+            'success': True, 
+            'message': f'画像 {image_path} のアップロードに成功しました。', 
+            'screenshot_path': None, # 成功時は通常SS不要だが、念のためキーは用意
+            'error_type': None
+        }
+        default_failure_result = {
+            'success': False, 
+            'message': f'画像 {image_path} のアップロードに失敗しました。', 
+            'screenshot_path': None, 
+            'error_type': self.ET_POST_IMAGE_UPLOAD_FAILED # デフォルトのエラータイプ
+        }
+
         try:
             # カーソル位置を最後に設定してから画像をアップロード
             if set_cursor_end:
@@ -969,24 +1114,77 @@ try {{     // Escaped
                 
                 time.sleep(0.5)  # カーソル移動の安定を待つ
             
-            return True
+            return default_success_result # 成功
             
         except Exception as e:
-            logger.error(f"画像アップロード中にエラーが発生しました: {e}"); return False
+            logger.error(f"画像アップロード中にエラーが発生しました: {e}", exc_info=True)
+            ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "img_upload_exception_")
+            return {**default_failure_result, 
+                    'message': f'画像 {image_path} のアップロード中に予期せぬエラー: {str(e)}',
+                    'screenshot_path': ss_path,
+                    'error_type': self.ET_POST_IMAGE_UPLOAD_FAILED # より具体的なエラーメッセージで上書き
+                   }
 
     def select_stylist(self, stylist_id):
         """スタイリストを選択する"""
+        default_success_result = {
+            'success': True, 
+            'message': f'スタイリスト (ID: {stylist_id}) の選択に成功しました。', 
+            'screenshot_path': None, 
+            'error_type': None
+        }
+        default_failure_result = {
+            'success': False, 
+            'message': f'スタイリスト (ID: {stylist_id}) の選択に失敗しました。', 
+            'screenshot_path': None, 
+            'error_type': self.ET_STYLIST_SELECT_UNEXPECTED # デフォルトの予期せぬエラー
+        }
+
         try:
+            logger.info(f"スタイリスト {stylist_id} を選択します")
             # 定数を使用
+            stylist_select_locator = self.page.locator(self._BLOG_FORM_STYLIST_SELECT)
+            
+            # セレクタが存在するか確認
+            if not stylist_select_locator.count():
+                logger.error(f"スタイリスト選択のセレクト要素 ({self._BLOG_FORM_STYLIST_SELECT}) が見つかりません。")
+                ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "stylist_select_notfound_")
+                return {**default_failure_result, 
+                        'message': f"スタイリスト選択のプルダウンが見つかりませんでした。",
+                        'screenshot_path': ss_path,
+                        'error_type': self.ET_STYLIST_SELECT_ELEMENT_NOT_FOUND}
+
             self.page.select_option(self._BLOG_FORM_STYLIST_SELECT, stylist_id)
-            return True
+            logger.info(f"スタイリスト {stylist_id} を選択しました。")
+            return default_success_result
         except Exception as e:
-            logger.error(f"スタイリスト選択中にエラーが発生しました: {e}"); return False
+            logger.error(f"スタイリスト選択中に予期せぬエラーが発生しました: {e}", exc_info=True)
+            ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "stylist_select_exception_")
+            # Playwrightのselect_optionは失敗時にエラーを投げるので、それをキャッチ
+            # 具体的なエラーメッセージによって error_type を変えることも可能
+            return {**default_failure_result, 
+                    'message': f"スタイリスト (ID: {stylist_id}) の選択中に予期せぬエラーが発生しました: {str(e)}",
+                    'screenshot_path': ss_path,
+                    'error_type': self.ET_STYLIST_SELECT_OPTION_FAILED # より具体的なエラータイプ
+                   }
 
     def select_coupon(self, coupon_names):
         """クーポンを選択する (filterメソッド使用版)"""
+        default_success_result = {
+            'success': True, 
+            'message': f'クーポン {coupon_names} の選択に成功しました。', 
+            'screenshot_path': None, 
+            'error_type': None
+        }
+        coupon_names_str = ", ".join(coupon_names) if isinstance(coupon_names, list) else str(coupon_names)
+        default_failure_result = {
+            'success': False, 
+            'message': f'クーポン ({coupon_names_str}) の選択に失敗しました。', 
+            'screenshot_path': None, 
+            'error_type': self.ET_COUPON_SELECTION_UNEXPECTED
+        }
+
         try:
-            # 定数を使用
             coupon_button_selector = self._BLOG_FORM_COUPON_BTN
             coupon_modal_selectors = [self._BLOG_FORM_COUPON_MODAL_PRIMARY, self._BLOG_FORM_COUPON_MODAL_ALT]
 
@@ -996,7 +1194,11 @@ try {{     // Escaped
                 coupon_button.wait_for(state="visible", timeout=10000)
             except TimeoutError:
                 logger.error(f"クーポン選択ボタン ({coupon_button_selector}) が表示されませんでした")
-                self.page.screenshot(path="coupon_button_not_visible.png"); return False
+                ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "coupon_btn_notfound_")
+                return {**default_failure_result, 
+                        'message': "クーポン選択ボタンが表示されませんでした。",
+                        'screenshot_path': ss_path,
+                        'error_type': self.ET_COUPON_BTN_NOT_VISIBLE}
 
             logger.info("クーポン選択ボタンをクリックします")
             clicked = False
@@ -1018,8 +1220,18 @@ try {{     // Escaped
                         logger.info("dispatch_event('click')でクーポン選択ボタンをクリックしました")
                     except Exception as dispatch_e:
                          logger.error(f"全てのクリック方法でクーポン選択ボタンのクリックに失敗: {dispatch_e}")
-                         self.page.screenshot(path="coupon_button_click_failed.png"); return False
-            if not clicked: logger.error("クーポン選択ボタンをクリックできませんでした。"); return False
+                         ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "coupon_btn_click_")
+                         return {**default_failure_result, 
+                                 'message': "クーポン選択ボタンのクリックに失敗しました。",
+                                 'screenshot_path': ss_path,
+                                 'error_type': self.ET_COUPON_BTN_CLICK_FAILED}
+            if not clicked: 
+                logger.error("クーポン選択ボタンをクリックできませんでした（最終確認）。") # この行は前の try-except でカバーされるはず
+                ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "coupon_btn_click_final_")
+                return {**default_failure_result, 
+                        'message': "クーポン選択ボタンのクリックに失敗しました（最終確認）。",
+                        'screenshot_path': ss_path,
+                        'error_type': self.ET_COUPON_BTN_CLICK_FAILED}
 
             modal_visible = False
             logger.info(f"クーポン選択モーダルの表示を待機します (セレクタ: {coupon_modal_selectors})")
@@ -1034,22 +1246,26 @@ try {{     // Escaped
                 time.sleep(1)
             if not modal_visible:
                  logger.error(f"クーポン選択モーダルの表示がタイムアウトしました ({self.default_timeout}ms)")
-                 self.page.screenshot(path="coupon_modal_timeout_screenshot.png"); return False
+                 ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "coupon_modal_timeout_")
+                 return {**default_failure_result, 
+                         'message': "クーポン選択モーダルの表示がタイムアウトしました。",
+                         'screenshot_path': ss_path,
+                         'error_type': self.ET_COUPON_MODAL_TIMEOUT}
 
             logger.info("クーポン選択処理を開始します (filter使用)")
-            all_coupons_selected = True
+            all_coupons_selected_successfully = True
             for coupon_name in coupon_names:
                 logger.info(f"クーポン '{coupon_name}' を選択します")
                 found_and_clicked = False
                 cleaned_coupon_name = coupon_name.strip()
-                if not cleaned_coupon_name: logger.warning("空のクーポン名のためスキップ"); continue
+                if not cleaned_coupon_name: 
+                    logger.warning("空のクーポン名のためスキップ")
+                    continue
                 try:
-                    # 定数を使用
                     all_labels = self.page.locator(f"{coupon_modal_selectors[0]} {self._BLOG_FORM_COUPON_LABEL}")
                     logger.debug(f"モーダル内のラベル候補数: {all_labels.count()}")
                     for i in range(all_labels.count()):
                         label = all_labels.nth(i)
-                        # 定数を使用
                         coupon_text_element = label.locator(self._BLOG_FORM_COUPON_TEXT)
                         if coupon_text_element.count() > 0:
                             actual_text = coupon_text_element.first.inner_text().strip()
@@ -1062,18 +1278,25 @@ try {{     // Escaped
                                     logger.info(f"クーポン '{cleaned_coupon_name}' をクリックしました。"); time.sleep(0.3); break
                                 except Exception as click_err:
                                      logger.warning(f"クーポン '{cleaned_coupon_name}' のクリックに失敗: {click_err}。念のため次の候補も探します。")
-                        else: logger.debug(f"ラベル {i} に {self._BLOG_FORM_COUPON_TEXT} が見つかりません。")
-                    if not found_and_clicked: logger.warning(f"クーポン '{cleaned_coupon_name}' がモーダル内で見つからないか、クリックできませんでした。")
-                except Exception as e: logger.error(f"クーポン '{coupon_name}' の選択処理中に予期せぬエラー: {e}", exc_info=True)
-                if not found_and_clicked: all_coupons_selected = False
-
-            if not all_coupons_selected:
+                        else: 
+                            logger.debug(f"ラベル {i} に {self._BLOG_FORM_COUPON_TEXT} が見つかりません。")
+                    if not found_and_clicked: 
+                        logger.warning(f"クーポン '{cleaned_coupon_name}' がモーダル内で見つからないか、クリックできませんでした。")
+                        all_coupons_selected_successfully = False
+                except Exception as e: 
+                    logger.error(f"クーポン '{coupon_name}' の選択処理中に予期せぬエラー: {e}", exc_info=True)
+                    all_coupons_selected_successfully = False
+            
+            if not all_coupons_selected_successfully:
                  logger.error("一部またはすべてのクーポンの選択に失敗しました。")
-                 self.page.screenshot(path="coupon_selection_error_screenshot.png")
+                 ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "coupon_item_select_")
+                 return {**default_failure_result, 
+                         'message': "一部または全てのクーポンの選択に失敗しました。",
+                         'screenshot_path': ss_path,
+                         'error_type': self.ET_COUPON_SELECTION_ITEM_NOT_FOUND}
 
             logger.info("「設定する」ボタンをクリックします")
             try:
-                # 定数を使用
                 setting_button_selector = self._BLOG_FORM_COUPON_SETTING_BTN
                 setting_button = self.page.locator(setting_button_selector)
                 setting_button.wait_for(state="visible", timeout=10000)
@@ -1081,11 +1304,15 @@ try {{     // Escaped
                     logger.info("「設定する」ボタンが有効です。クリックします。")
                     setting_button.click(timeout=5000)
                 else:
-                     logger.warning("「設定する」ボタンが無効状態 (is_disable) です。クリックをスキップします。"); return False
+                     logger.warning("「設定する」ボタンが無効状態 (is_disable) です。クリックをスキップします。")
+                     ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "coupon_setting_btn_disabled_")
+                     return {**default_failure_result, 
+                             'message': "クーポン「設定する」ボタンが無効状態でした。",
+                             'screenshot_path': ss_path,
+                             'error_type': self.ET_COUPON_SETTING_BTN_CLICK_FAILED}
             except Exception as e:
                 logger.warning(f"標準セレクタでの設定ボタンのクリックに失敗しました: {e}")
                 try:
-                    # 定数を使用 (XPath)
                     alt_setting_button_selector = self._BLOG_FORM_COUPON_SETTING_BTN_XPATH
                     alt_setting_button = self.page.locator(alt_setting_button_selector)
                     alt_setting_button.wait_for(state="visible", timeout=5000)
@@ -1093,10 +1320,19 @@ try {{     // Escaped
                         alt_setting_button.click(timeout=5000)
                         logger.info("代替セレクタで「設定する」ボタンをクリックしました。")
                     else:
-                        logger.warning("代替セレクタでも「設定する」ボタンが無効状態です。"); return False
+                        logger.warning("代替セレクタでも「設定する」ボタンが無効状態です。")
+                        ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "coupon_setting_btn_alt_disabled_")
+                        return {**default_failure_result, 
+                                'message': "クーポン「設定する」ボタンが無効状態でした（代替確認）。",
+                                'screenshot_path': ss_path,
+                                'error_type': self.ET_COUPON_SETTING_BTN_CLICK_FAILED}
                 except Exception as alt_e:
                     logger.error(f"代替方法での設定ボタンのクリックにも失敗しました: {alt_e}", exc_info=True)
-                    self.page.screenshot(path="coupon_setting_button_click_error.png"); return False
+                    ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "coupon_setting_click_failed_")
+                    return {**default_failure_result, 
+                            'message': "クーポン「設定する」ボタンのクリックに失敗しました。",
+                            'screenshot_path': ss_path,
+                            'error_type': self.ET_COUPON_SETTING_BTN_CLICK_FAILED}
 
             logger.info("モーダルが閉じるのを待機します")
             try:
@@ -1105,73 +1341,89 @@ try {{     // Escaped
                         self.page.locator(selector).wait_for(state="hidden", timeout=10000)
                         logger.info(f"クーポン選択モーダル ({selector}) が閉じました"); break
                     except TimeoutError:
-                         if selector == coupon_modal_selectors[0]: logger.warning("クーポン選択モーダルが閉じるのを待機中にタイムアウトしました。")
+                         if selector == coupon_modal_selectors[0]: 
+                            logger.warning("クーポン選択モーダルが閉じるのを待機中にタイムアウトしました。")
+                            ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "coupon_modal_close_timeout_")
+                            return {**default_failure_result, 
+                                    'message': "クーポン選択モーダルが閉じるのを待機中にタイムアウトしました。",
+                                    'screenshot_path': ss_path,
+                                    'error_type': self.ET_COUPON_MODAL_CLOSE_TIMEOUT}
                     except Exception: pass 
-            except Exception as wait_close_e: logger.warning(f"モーダルが閉じるのを待機中にエラー: {wait_close_e}")
+            except Exception as wait_close_e: 
+                logger.warning(f"モーダルが閉じるのを待機中にエラー: {wait_close_e}")
+                ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "coupon_modal_close_exception_")
+                return {**default_failure_result, 
+                        'message': f"クーポンモーダルを閉じる待機中にエラー: {wait_close_e}",
+                        'screenshot_path': ss_path,
+                        'error_type': self.ET_COUPON_MODAL_CLOSE_TIMEOUT}
 
-            if not all_coupons_selected:
-                logger.error("クーポン選択に失敗したため、処理全体を失敗とします。"); return False
-            return True
+            return default_success_result
 
         except Exception as e:
             logger.error(f"クーポン選択処理全体でエラーが発生しました: {e}", exc_info=True) 
-            self.page.screenshot(path="coupon_selection_overall_error.png"); return False
+            ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "coupon_select_overall_exception_")
+            return {**default_failure_result, 
+                    'message': f"クーポン選択処理中に予期せぬエラーが発生しました: {str(e)}",
+                    'screenshot_path': ss_path,
+                    'error_type': self.ET_COUPON_SELECTION_UNEXPECTED}
 
     def post_blog(self, blog_data):
         """ブログを投稿する"""
+        default_success_result = {
+            'success': True, 
+            'message': 'ブログの投稿（未反映登録）に成功しました。', 
+            'screenshot_path': None, 
+            'error_type': None
+        }
+        default_failure_result = {
+            'success': False, 
+            'message': 'ブログの投稿（未反映登録）に失敗しました。', 
+            'screenshot_path': None, 
+            'error_type': self.ET_POST_BLOG_GENERAL
+        }
+
         try:
-            if not self.select_stylist(blog_data['stylist_id']): return False
-            
+            # スタイリスト選択
+            stylist_select_result = self.select_stylist(blog_data['stylist_id']) # 辞書が返る
+            if not stylist_select_result['success']:
+                logger.error(f"スタイリストの選択に失敗しました: {stylist_select_result.get('message')}")
+                return stylist_select_result
+
             # 定数を使用
             self.page.select_option(self._BLOG_FORM_CATEGORY_SELECT, "BL02") # カテゴリIDは固定値のまま
             self.page.fill(self._BLOG_FORM_TITLE_INPUT, blog_data['title'])
-            
+
             # 構造化データ（sections）がある場合、それに基づいて処理
             if 'sections' in blog_data and isinstance(blog_data['sections'], list) and len(blog_data['sections']) > 0:
                 logger.info("構造化データ（sections）に基づいてコンテンツを処理します")
                 
-                # 最初は空のコンテンツで初期化
                 if not self.set_rich_text_content(""): 
                     logger.error("初期化用の空コンテンツの設定に失敗しました")
-                    return False
+                    ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "content_init_")
+                    return {**default_failure_result, 
+                            'message': "ブログコンテンツの初期化に失敗しました。",
+                            'screenshot_path': ss_path,
+                            'error_type': self.ET_POST_CONTENT_INIT_FAILED}
                 
-                # 「フラグメント挿入アプローチ」: nicEditのDOMを直接操作
                 logger.info("フラグメント挿入アプローチを実行します")
                 
-                # エディタを初期化
-                if not self.set_rich_text_content(""):
-                    logger.error("初期化用の空コンテンツ設定に失敗しました")
-                    return False
-                
-                # まずセクションを処理可能な形式に変換
-                sections_to_process = []
-                for i, section in enumerate(blog_data['sections']):
-                    if not isinstance(section, dict):
-                        continue
-                    
-                    section_type = section.get('type')
-                    if section_type in ['text', 'image']:
-                        sections_to_process.append({
-                            'type': section_type,
-                            'data': section,
-                            'original_index': i
-                        })
-                
-                logger.info(f"フラグメント挿入アプローチ: 合計 {len(sections_to_process)} 個のセクションを処理します")
-                
-                # この方法では一つずつセクションを処理し、毎回コンテンツ全体を再構成
+                if not self.set_rich_text_content(""): # 再度初期化
+                    logger.error("再初期化用の空コンテンツ設定に失敗しました")
+                    ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "content_reinit_")
+                    return {**default_failure_result, 
+                            'message': "ブログコンテンツの再初期化に失敗しました。",
+                            'screenshot_path': ss_path,
+                            'error_type': self.ET_POST_CONTENT_REINIT_FAILED}
+
                 current_content = ""
-                
-                for idx, section_data in enumerate(sections_to_process):
-                    section_type = section_data['type']
-                    section = section_data['data']
-                    
-                    # 前のセクションとの間に空行を入れる（最初のセクション以外）
+                for idx, section_data in enumerate(blog_data['sections_to_process'] if 'sections_to_process' in blog_data else blog_data['sections']): # 互換性
+                    section_type = section_data.get('type')
+                    section = section_data.get('data', section_data) # 互換性
+
                     if idx > 0 and current_content:
                         current_content += "<div><br></div>\n"
                     
                     if section_type == 'text':
-                        # テキストセクションの処理
                         content = section.get('content', '')
                         if content and len(content.strip()) > 0:
                             logger.info(f"テキストセクション {idx+1} を追加: {content[:30]}...")
@@ -1179,74 +1431,51 @@ try {{     // Escaped
                             current_content += formatted_content
                     
                     elif section_type == 'image':
-                        # 画像セクションの処理
                         try:
                             image_index = section.get('imageIndex', 0)
                             if not isinstance(image_index, int):
-                                try:
-                                    image_index = int(image_index)
-                                except (ValueError, TypeError):
-                                    logger.error(f"無効な画像インデックス: {image_index}")
-                                    image_index = 0
+                                image_index = int(image_index)
                             
                             if blog_data.get('image_paths') and 0 <= image_index < len(blog_data['image_paths']):
                                 image_path = blog_data['image_paths'][image_index]
                                 logger.info(f"画像セクション {idx+1} を処理: {image_path}")
                                 
-                                # 現在のコンテンツを一度保存
                                 if not self.set_rich_text_content(current_content):
                                     logger.warning(f"中間コンテンツの設定に失敗しました")
-                                    continue
-                                time.sleep(1.0)  # DOM更新の安定化待機
+                                    continue # 次のセクションへ
+                                time.sleep(1.0)
                                 
-                                # 画像のみを挿入（現在の内容はすでに保存済み）
                                 if not self.upload_image(image_path, set_cursor_end=True):
                                     logger.warning(f"画像アップロード失敗: {image_path}")
+                                    # 失敗しても処理を続けるか、エラーとしてリターンするかは要件次第
+                                    # ここでは警告に留め、次のセクション処理へ
                                     continue
                                 
-                                # 画像挿入後の処理
-                                time.sleep(2.0)  # 画像アップロード完了まで待機
+                                time.sleep(2.0)
                                 
-                                # エディタの現在の内容を取得
                                 js_get_content = """
                                 (function() {
                                     try {
                                         var editorInstance = nicEditors.findEditor('blogContents');
-                                        if (editorInstance) {
-                                            return editorInstance.getContent();
-                                        }
+                                        if (editorInstance) { return editorInstance.getContent(); }
                                         return "";
-                                    } catch(e) {
-                                        console.error('コンテンツ取得エラー:', e);
-                                        return "";
-                                    }
+                                    } catch(e) { console.error('コンテンツ取得エラー:', e); return ""; }
                                 })();
                                 """
                                 editor_content = self.page.evaluate(js_get_content)
                                 
-                                # 挿入された画像を探して保存
                                 if editor_content:
-                                    # 先頭の画像を探す（nicEditは画像を先頭に挿入する）
                                     import re
                                     img_match = re.search(r'<img[^>]+>', editor_content)
-                                    
                                     if img_match:
-                                        # 画像タグを抽出
                                         img_tag = img_match.group(0)
-                                        
-                                        # 後でdivで包む
                                         img_div = f"<div>{img_tag}</div>"
-                                        
-                                        # 画像タグを除いた残りのコンテンツ
-                                        # （先頭の画像を除去し、必要な部分だけ保持）
-                                        remaining_content = editor_content.replace(img_tag, "", 1)
-                                        
-                                        # 現在のテキストに画像を追加
                                         current_content += img_div
-                                        
-                                        # 元のコンテンツを復元（画像は保持済み）
-                                        if not self.set_rich_text_content(current_content):
-                                            logger.warning("コンテンツの再構成に失敗しました")
+                                        # 画像挿入後のコンテンツで current_content を更新するのではなく、
+                                        # editor_content から画像タグを除いたものを current_content に加えるべきかもしれないが、
+                                        # nicEdit の挙動に依存するため、ここでは元のロジックを尊重
+                                        if not self.set_rich_text_content(current_content): # 更新されたcurrent_contentでエディタを再設定
+                                            logger.warning("画像挿入後のコンテンツ再構成に失敗しました")
                                     else:
                                         logger.warning("挿入された画像タグが見つかりませんでした")
                                 else:
@@ -1255,273 +1484,291 @@ try {{     // Escaped
                                 logger.warning(f"指定された画像が見つかりません: index {image_index}")
                         except Exception as img_err:
                             logger.error(f"画像処理エラー: {img_err}", exc_info=True)
-                    
-                    # 各セクション処理後の安定化待機
                     time.sleep(1.0)
                 
-                # 最終的なコンテンツをセット
                 if current_content and not self.set_rich_text_content(current_content):
                     logger.warning("最終コンテンツの設定に失敗しました")
-                    
+                    ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "final_content_set_")
+                    return {**default_failure_result, 
+                            'message': "最終的なブログコンテンツの設定に失敗しました。",
+                            'screenshot_path': ss_path,
+                            'error_type': self.ET_POST_FINAL_CONTENT_SETTING_FAILED}
+
                 logger.info("フラグメント挿入アプローチによる処理が完了しました")
                 
-                # テンプレートがあれば追加
                 if blog_data.get('template'):
                     logger.info("テンプレートを追加します")
                     if not self.append_rich_text_content("\n\n" + blog_data['template']):
                         logger.warning("テンプレート追加中にエラーが発生しました")
             
-            else:
-                # 従来の方法（フォールバック）
+            else: # 従来の方法
                 logger.info("従来の方法でコンテンツを設定します（構造化データなし）")
                 full_content = blog_data['content']
                 if blog_data.get('template'): full_content += "\n\n" + blog_data['template']
-                if not self.set_rich_text_content(full_content): return False
+                if not self.set_rich_text_content(full_content):
+                    ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "legacy_content_set_")
+                    return {**default_failure_result, 
+                            'message': "ブログコンテンツ（従来形式）の設定に失敗しました。",
+                            'screenshot_path': ss_path,
+                            'error_type': self.ET_POST_LEGACY_CONTENT_SETTING_FAILED}
                 
-                # 画像をアップロード
                 if blog_data.get('image_paths'):
                     for image_path in blog_data['image_paths']:
-                        # カーソル位置を最後に設定してから画像をアップロード
-                        if not self.upload_image(image_path, set_cursor_end=True):
-                            logger.warning(f"画像 '{image_path}' のアップロードに失敗しました。続行します。")
+                        upload_result = self.upload_image(image_path, set_cursor_end=True)
+                        if not upload_result['success']:
+                            logger.error(f"画像 '{image_path}' のアップロードに失敗しました: {upload_result.get('message')}")
+                            # upload_result には既にSSパスやエラータイプが含まれているのでそれを返す
+                            # ただし、post_blog の default_failure_result とメッセージが競合しないように注意
+                            # ここでは upload_result をそのまま返さず、post_blog としての失敗情報にマージする方が良いかもしれない
+                            # が、一旦 upload_result を優先して返す
+                            return upload_result 
             
-            # クーポン設定
             if blog_data.get('coupon_names') and len(blog_data['coupon_names']) > 0:
-                if not self.select_coupon(blog_data['coupon_names']): return False
+                coupon_select_result = self.select_coupon(blog_data['coupon_names']) # 辞書が返る
+                if not coupon_select_result['success']:
+                    logger.error(f"クーポンの選択に失敗しました: {coupon_select_result.get('message')}")
+                    return coupon_select_result # 詳細辞書をそのまま返す
             
-            # 定数を使用
             logger.info(f"「確認する」ボタン ({self._BLOG_CONFIRM_BTN}) をクリックします")
             try:
-                confirm_button = self.page.locator(self._BLOG_CONFIRM_BTN)
-                confirm_button.wait_for(state="visible", timeout=10000) 
-                confirm_button.click(timeout=5000)
+                self.page.locator(self._BLOG_CONFIRM_BTN).click(timeout=10000)
                 logger.info("「確認する」ボタンをクリックしました")
             except Exception as confirm_err:
                  logger.error(f"「確認する」ボタンのクリックに失敗: {confirm_err}", exc_info=True)
-                 self.page.screenshot(path="confirm_button_click_error.png"); return False
+                 ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "confirm_click_")
+                 return {**default_failure_result, 
+                         'message': f"「確認する」ボタンのクリックに失敗しました: {confirm_err}",
+                         'screenshot_path': ss_path,
+                         'error_type': self.ET_POST_CONFIRM_CLICK_FAILED}
 
-            # 定数を使用
-            unreflect_button_selector = self._BLOG_UNREFLECT_BTN
-            logger.info(f"確認ページ（「登録・未反映にする」ボタン {unreflect_button_selector}）の表示を待機します") 
+            logger.info(f"確認ページ（「登録・未反映にする」ボタン {self._BLOG_UNREFLECT_BTN} または「登録・反映する」ボタン {self._BLOG_REFLECT_BTN}）の表示を待機します")
             try:
-                self.page.wait_for_selector(unreflect_button_selector, state="visible", timeout=60000)
-                logger.info("確認ページの表示（「登録・未反映にする」ボタンの存在）を確認しました")
+                # どちらかのボタンが表示されるのを待つ
+                # まず「登録・反映する」ボタンを優先的に確認
+                reflect_button_selector = self._BLOG_REFLECT_BTN # 修正
+                unreflect_button_selector = self._BLOG_UNREFLECT_BTN # 既存の未反映ボタンセレクタ
+
+                # reflectボタンの有無を確認
+                reflect_button_visible = False
+                try:
+                    self.page.wait_for_selector(reflect_button_selector, state="visible", timeout=5000) # 短めのタイムアウトで確認
+                    reflect_button_visible = True
+                    logger.info("「登録・反映する」ボタンの表示を確認しました")
+                except TimeoutError:
+                    logger.info(f"「登録・反映する」ボタン({reflect_button_selector})は見つかりませんでした。「登録・未反映にする」ボタン({unreflect_button_selector})を確認します。") # ログ修正
+
+                if reflect_button_visible:
+                    # 「登録・反映する」ボタンが存在する場合、それをターゲットにする
+                    target_button_selector = reflect_button_selector
+                    target_button_name = "登録・反映する"
+                else:
+                    # 「登録・反映する」ボタンがなければ、「登録・未反映にする」ボタンを待つ
+                    self.page.wait_for_selector(unreflect_button_selector, state="visible", timeout=55000) # 残りの時間で待つ
+                    target_button_selector = unreflect_button_selector
+                    target_button_name = "登録・未反映にする"
+                    logger.info(f"「{target_button_name}」ボタンの表示を確認しました")
+                
             except TimeoutError:
-                logger.error("確認ページの表示がタイムアウトしました (「登録・未反映にする」ボタンが見つかりません)")
-                self.page.screenshot(path="unreflect_page_timeout.png"); return False
+                logger.error("確認ページ（反映または未反映ボタン）の表示がタイムアウトしました")
+                ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "confirm_page_timeout_")
+                return {**default_failure_result, 
+                        'message': "確認ページ（反映または未反映ボタン）の表示がタイムアウトしました。",
+                        'screenshot_path': ss_path,
+                        'error_type': self.ET_POST_CONFIRM_PAGE_TIMEOUT}
 
             if self.is_robot_detection_present():
-                logger.error("確認ページでロボット認証が検出されました。処理を中断します。"); return False
+                logger.error("確認ページでロボット認証が検出されました。")
+                ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "confirm_page_robot_")
+                return {**default_failure_result, 
+                        'message': "確認ページでロボット認証が検出されました。",
+                        'screenshot_path': ss_path,
+                        'error_type': self.ET_POST_ROBOT_DETECTED_ON_CONFIRM, 
+                        'robot_detected': True} # robot_detectedフラグを追加
                 
-            logger.info(f"「登録・未反映にする」ボタン ({unreflect_button_selector}) をクリックします")
+            logger.info(f"「{target_button_name}」ボタン ({target_button_selector}) をクリックします")
             try:
-                 unreflect_button = self.page.locator(unreflect_button_selector)
-                 unreflect_button.click(timeout=10000)
-                 logger.info("「登録・未反映にする」ボタンをクリックしました")
-            except Exception as unreflect_err:
-                 logger.error(f"「登録・未反映にする」ボタンのクリックに失敗: {unreflect_err}", exc_info=True)
-                 self.page.screenshot(path="unreflect_button_click_error.png"); return False
+                 self.page.locator(target_button_selector).click(timeout=10000)
+                 logger.info(f"「{target_button_name}」ボタンをクリックしました")
+            except Exception as reflect_err: # 変数名を reflect_err に変更 (unreflect_err から)
+                 logger.error(f"「{target_button_name}」ボタンのクリックに失敗: {reflect_err}", exc_info=True)
+                 ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "reflect_click_") # reflect_click に変更
+                 return {**default_failure_result, 
+                         'message': f"「{target_button_name}」ボタンのクリックに失敗しました: {reflect_err}",
+                         'screenshot_path': ss_path,
+                         'error_type': self.ET_POST_UNREFLECT_CLICK_FAILED} # エラータイプは既存のものを流用
 
-            # 定数を使用
-            back_button_selector = self._BLOG_BACK_BTN
-            logger.info(f"「ブログ一覧へ」ボタン ({back_button_selector}) を待機し、クリックします")
+            logger.info(f"「ブログ一覧へ」ボタン ({self._BLOG_BACK_BTN}) を待機し、クリックします")
             try:
-                back_button = self.page.locator(back_button_selector)
-                back_button.wait_for(state="visible", timeout=30000)
-                logger.info("「ブログ一覧へ」ボタンが表示されました。クリックします。")
-                back_button.click(timeout=10000)
+                self.page.locator(self._BLOG_BACK_BTN).click(timeout=30000) # wait_for visibleは不要な場合がある
                 logger.info("「ブログ一覧へ」ボタンをクリックしました。")
             except Exception as back_err:
-                logger.warning(f"「ブログ一覧へ」ボタンのクリックに失敗しました（処理は続行される可能性があります）: {back_err}", exc_info=True)
-                self.page.screenshot(path="back_button_click_error.png")
+                logger.warning(f"「ブログ一覧へ」ボタンのクリックに失敗（処理は続行）: {back_err}", exc_info=True)
+                ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "back_button_click_warn_") # 警告としてSS
+                # ここでエラーとして処理を中断する場合は以下のようにする
+                return {**default_failure_result,
+                        'message': f"「ブログ一覧へ」ボタンのクリックに失敗しました: {str(back_err)}",
+                        'screenshot_path': ss_path,
+                        'error_type': self.ET_POST_BACK_BUTTON_CLICK_FAILED}
             
-            # 定数を使用 (完了確認は新規投稿ボタンの再表示で行う)
             logger.info(f"ブログ一覧ページへの遷移（例: {self._NAVI_NEW_POST} ボタンの再表示）を待機します") 
             try:
                 self.page.wait_for_selector(self._NAVI_NEW_POST, state="visible", timeout=60000)
                 logger.info("ブログ一覧ページへの遷移（または完了状態）を確認しました")
             except TimeoutError:
-                logger.warning("ブログ一覧ページへの遷移確認がタイムアウトしました。成功した可能性もあります。")
-                self.page.screenshot(path="unreflect_complete_timeout.png")
+                logger.warning("ブログ一覧ページへの遷移確認がタイムアウト。成功の可能性あり。")
+                ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "post_complete_timeout_warn_") # 警告としてSS
+                # ここでエラーとして処理を中断する場合は以下のようにする
+                return {**default_failure_result,
+                        'message': "ブログ一覧ページへの遷移確認がタイムアウトしました。投稿状態を確認してください。",
+                        'screenshot_path': ss_path,
+                        'error_type': self.ET_POST_COMPLETE_TIMEOUT}
             
-            if self.is_robot_detection_present(): logger.warning("処理完了後（？）にロボット認証が検出されました。")
+            if self.is_robot_detection_present(): 
+                logger.warning("処理完了後（？）にロボット認証が検出されました。")
+                # 警告としてSS。robot_detected フラグは立てない（投稿自体は成功している可能性があるため）
 
             logger.info("ブログの「登録・未反映」処理が完了しました")
-            return True
+            success_ss_path = self.take_screenshot(prefix="post_success_")
+            return {**default_success_result, 'screenshot_path': success_ss_path}
             
         except Exception as e:
-            logger.error(f"ブログ投稿処理（未反映登録）中にエラーが発生しました: {e}", exc_info=True)
-            try: self.page.screenshot(path="post_blog_unreflect_error.png")
-            except Exception as ss_err: logger.error(f"エラー時のスクリーンショット撮影に失敗: {ss_err}")
-            return False
+            logger.error(f"ブログ投稿処理（未反映登録）中にエラー: {e}", exc_info=True)
+            ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "post_blog_exception_")
+            return {**default_failure_result, 
+                    'message': f"ブログ投稿処理中に予期せぬエラー: {str(e)}",
+                    'screenshot_path': ss_path,
+                    'error_type': self.ET_POST_UNEXPECTED_ERROR}
 
     # --- Private Step Methods for execute_post Flow ---
 
     def _step_login(self, user_id, password):
         """Execute post step: Perform login."""
         logger.info("ステップ1/3: サロンボードへのログインを開始します。")
-        if not self.login(user_id, password):
-            logger.error("ログインステップで失敗しました。処理を中断します。")
-            return False
+        login_result = self.login(user_id, password) # loginは辞書を返す
+        if not login_result['success']:
+            logger.error(f"ログインステップで失敗しました: {login_result.get('message')}")
+            return login_result # 詳細辞書をそのまま返す
         logger.info("ステップ1/3: ログイン成功。")
-        return True
+        return login_result # 成功時も詳細辞書を返す
 
     def _step_navigate_to_blog_form(self):
         """Execute post step: Navigate to the blog posting form."""
         logger.info("ステップ2/3: ブログ投稿ページへの移動を開始します。")
-        if not self.navigate_to_blog_post_page():
-            logger.error("ブログ投稿ページへの移動ステップで失敗しました。処理を中断します。")
-            return False
+        nav_result = self.navigate_to_blog_post_page() # navigate_to_blog_post_pageは辞書を返す
+        if not nav_result['success']:
+            logger.error(f"ブログ投稿ページへの移動ステップで失敗しました: {nav_result.get('message')}")
+            return nav_result # 詳細辞書をそのまま返す
         logger.info("ステップ2/3: ブログ投稿ページへの移動成功。")
-        return True
+        return nav_result # 成功時も詳細辞書を返す
 
     def _step_post_blog_data(self, blog_data):
         """Execute post step: Fill form and post blog data."""
         logger.info("ステップ3/3: ブログデータの入力と投稿（未反映登録）を開始します。")
-        if not self.post_blog(blog_data):
-            logger.error("ブログデータの入力・投稿ステップで失敗しました。")
-            return False
-        logger.info("ステップ3/3: ブログデータの入力・投稿（未反映登録）成功。")
-        return True
+        post_result = self.post_blog(blog_data) # post_blogは辞書を返すようになった
+        if not post_result['success']:
+            logger.error(f"ブログデータの入力・投稿ステップで失敗しました: {post_result.get('message')}")
+        else:
+            logger.info("ステップ3/3: ブログデータの入力・投稿（未反映登録）成功。")
+        return post_result # post_blogから返された詳細辞書をそのまま返す
 
     # --- Public Method ---
 
     def execute_post(self, user_id, password, blog_data):
         """
-        サロンボードへのログインからブログ投稿までの一連の処理を実行
+        ブログ投稿の一連の処理（ログインから投稿まで）を実行する。
         
         Args:
-            user_id (str): サロンボードのユーザーID
-            password (str): サロンボードのパスワード
-            blog_data (dict): ブログ投稿に必要なデータ
-                
+            user_id (str): サロンボードのユーザーID。
+            password (str): サロンボードのパスワード。
+            blog_data (dict): ブログ投稿データ。
+        
         Returns:
-            bool or dict: 成功でTrue、失敗でFalse。成功時はスクリーンショットのパスを含む辞書を返す。
-                         ロボット認証検出時は失敗でもスクリーンショットのパスを含む辞書を返す。
+            dict: 処理結果。post_blogメソッドの返り値と同じ構造。
         """
-        success = False
-        screenshot_path = None
-        robot_detected = False
         start_time = time.time()
         logger.info("=== Salon Boardブログ投稿処理 開始 ===")
-        try:
-            # --- 1. ブラウザ起動 ---
-            if not self.start(): 
-                # start内でエラーログ出力済み
-                return False 
-            
-            # --- 2. ログイン実行 ---
-            login_result = self._step_login(user_id, password)
-            if not login_result:
-                # _step_login内でエラーログ出力済み
-                # ロボット認証か確認
-                if self.is_robot_detection_present():
-                    robot_detected = True
-                    logger.error("ログイン中にロボット認証が検出されました")
-                    # スクリーンショットを撮影
-                    try:
-                        screenshot_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'uploads', f'robot_auth_screenshot_{int(time.time())}.png')
-                        self.page.screenshot(path=screenshot_path)
-                        logger.info(f"ロボット認証のスクリーンショットを保存しました: {screenshot_path}")
-                    except Exception as ss_err:
-                        logger.error(f"ロボット認証のスクリーンショット撮影時にエラー: {ss_err}")
-                        screenshot_path = None
-                return {'success': False, 'robot_detected': True, 'screenshot_path': screenshot_path} if screenshot_path else False
-            
-            # --- 3. ブログ投稿ページへ移動 ---
-            if not self._step_navigate_to_blog_form():
-                # _step_navigate_to_blog_form内でエラーログ出力済み
-                # ロボット認証か確認
-                if self.is_robot_detection_present():
-                    robot_detected = True
-                    logger.error("ページ移動中にロボット認証が検出されました")
-                    # スクリーンショットを撮影
-                    try:
-                        screenshot_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'uploads', f'robot_auth_screenshot_{int(time.time())}.png')
-                        self.page.screenshot(path=screenshot_path)
-                        logger.info(f"ロボット認証のスクリーンショットを保存しました: {screenshot_path}")
-                    except Exception as ss_err:
-                        logger.error(f"ロボット認証のスクリーンショット撮影時にエラー: {ss_err}")
-                        screenshot_path = None
-                return {'success': False, 'robot_detected': True, 'screenshot_path': screenshot_path} if screenshot_path else False
-            
-            # --- 4. ブログデータ入力・投稿 --- 
-            if not self._step_post_blog_data(blog_data):
-                # _step_post_blog_data内でエラーログ出力済み
-                # ロボット認証か確認
-                if self.is_robot_detection_present():
-                    robot_detected = True
-                    logger.error("ブログデータ入力・投稿中にロボット認証が検出されました")
-                    # スクリーンショットを撮影
-                    try:
-                        screenshot_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'uploads', f'robot_auth_screenshot_{int(time.time())}.png')
-                        self.page.screenshot(path=screenshot_path)
-                        logger.info(f"ロボット認証のスクリーンショットを保存しました: {screenshot_path}")
-                    except Exception as ss_err:
-                        logger.error(f"ロボット認証のスクリーンショット撮影時にエラー: {ss_err}")
-                        screenshot_path = None
-                return {'success': False, 'robot_detected': True, 'screenshot_path': screenshot_path} if screenshot_path else False
-            
-            # 全てのステップが成功した場合
-            success = True
-            logger.info("=== Salon Boardブログ投稿処理 正常終了 ===")
-            
-            # 成功時にスクリーンショットを撮る
-            try:
-                # ページのレンダリングが完了するまで待機（2秒）
-                logger.info("スクリーンショット撮影前に2秒待機します...")
-                time.sleep(2)
-                
-                screenshot_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'uploads', f'success_screenshot_{int(time.time())}.png')
-                self.page.screenshot(path=screenshot_path)
-                logger.info(f"投稿成功後のスクリーンショットを保存しました: {screenshot_path}")
-            except Exception as ss_err:
-                logger.error(f"スクリーンショット撮影時にエラー: {ss_err}")
-                screenshot_path = None
-            
-        except Exception as e:
-            #予期せぬエラーのキャッチ
-            logger.error(f"ブログ投稿処理の予期せぬエラー: {e}", exc_info=True)
-            success = False
-            
-            # ロボット認証か確認
-            if self.page and self.is_robot_detection_present():
-                robot_detected = True
-                logger.error("予期せぬエラー時にロボット認証が検出されました")
-                # スクリーンショットを撮影
-                try:
-                    screenshot_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'uploads', f'robot_auth_screenshot_{int(time.time())}.png')
-                    self.page.screenshot(path=screenshot_path)
-                    logger.info(f"ロボット認証のスクリーンショットを保存しました: {screenshot_path}")
-                except Exception as ss_err:
-                    logger.error(f"ロボット認証のスクリーンショット撮影時にエラー: {ss_err}")
-                    screenshot_path = None
-            # エラー発生時にもスクリーンショットを試みる（ロボット認証でない場合）
-            elif self.page and not robot_detected:
-                try: 
-                    error_screenshot_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'uploads', f'error_screenshot_{int(time.time())}.png')
-                    self.page.screenshot(path=error_screenshot_path)
-                    logger.info(f"エラー時のスクリーンショットを保存しました: {error_screenshot_path}")
-                    screenshot_path = error_screenshot_path
-                except Exception as ss_err: 
-                    logger.error(f"予期せぬエラー時のスクリーンショット撮影失敗: {ss_err}")
-        finally:
-            # --- 5. ブラウザ終了 ---
-            logger.info("ブラウザを終了します。")
-            self.close()
-            end_time = time.time()
-            logger.info(f"処理時間: {end_time - start_time:.2f} 秒")
         
-        # 結果を返す
-        if robot_detected and screenshot_path:
+        default_error_result = {
+            'success': False,
+            'message': 'ブログ投稿処理の初期化に失敗しました。',
+            'screenshot_path': None,
+            'error_type': self.ET_INIT_FAILED
+        }
+
+        if not self.start(): # ブラウザ起動
+            default_error_result['message'] = "ブラウザの起動に失敗しました。"
+            default_error_result['error_type'] = self.ET_BROWSER_START_FAILED # エラータイプを具体的に
+            # self.start()内でエラーログとスクリーンショット(もしpageがあれば)は試みられる
+            # self.start() は bool しか返さないので、ここでssは撮れない。
+            # ただし、self.page が None の可能性が高いので、撮れたとしても限定的。
+            return default_error_result
+
+        try:
+            # ステップ1: ログイン
+            login_result = self.login(user_id, password)
+            if not login_result['success']:
+                # loginメソッドが詳細な結果を返すので、それをそのまま返す
+                logger.error(f"ログインステップで失敗: {login_result.get('message')}")
+                return login_result # 既に詳細なエラー情報とSSパスを含む
+
+            # ステップ2: ブログ投稿ページへ移動
+            nav_result = self.navigate_to_blog_post_page()
+            if not nav_result['success']:
+                logger.error(f"ブログ投稿ページへの移動ステップで失敗: {nav_result.get('message')}")
+                return nav_result # 既に詳細なエラー情報とSSパスを含む
+
+            # ステップ3: ブログデータの入力と投稿
+            post_result = self.post_blog(blog_data)
+            # post_blogは既に期待する辞書形式で結果を返すはず
+            
+            if post_result['success']:
+                logger.info(f"=== Salon Boardブログ投稿処理 正常終了 ===")
+            else:
+                logger.error(f"ブログ投稿ステップで失敗: {post_result.get('message')}")
+                logger.info(f"=== Salon Boardブログ投稿処理 異常終了 ===")
+            return post_result
+
+        except Exception as e:
+            logger.error(f"ブログ投稿のメイン処理中に予期せぬエラー: {e}", exc_info=True)
+            # 予期せぬエラーの場合もスクリーンショットを試みる
+            failure_screenshot = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "exec_post_exception_")
             return {
                 'success': False,
-                'robot_detected': True,
-                'screenshot_path': screenshot_path
+                'message': f"ブログ投稿処理中に予期せぬエラーが発生しました: {str(e)}",
+                'screenshot_path': failure_screenshot,
+                'error_type': self.ET_EXEC_POST_UNKNOWN_ERROR
             }
-        elif success and screenshot_path:
-            return {
-                'success': True,
-                'screenshot_path': screenshot_path
-            }
-        return success 
+        finally:
+            end_time = time.time()
+            processing_time = end_time - start_time
+            logger.info(f"処理時間: {processing_time:.2f} 秒")
+            # 成功時スクリーンショットはpost_blog内で撮影されるため、ここでは不要
+            # if post_result and post_result.get('success') and not post_result.get('screenshot_path'): # 通常はpost_blogが撮影
+            #    logger.info("投稿成功後のスクリーンショットを撮影します (execute_postのfinally)。")
+            #    self.take_screenshot(prefix="final_success_screenshot_")
+
+            logger.info("ブラウザを終了します。")
+            self.close()
+
+    def take_screenshot(self, prefix="screenshot_") -> str | None:
+        """現在のページのスクリーンショットを撮影し、パスを返す"""
+        if not self.page:
+            logger.warning("ページが初期化されていないため、スクリーンショットを撮影できません。")
+            return None
+        
+        try:
+            # コンストラクタで渡された screenshot_folder_path を使用
+            screenshot_folder = self.screenshot_folder_path 
+            
+            os.makedirs(screenshot_folder, exist_ok=True)
+            
+            timestamp = int(time.time())
+            filename = f"{prefix}{timestamp}.png"
+            filepath = os.path.join(screenshot_folder, filename)
+            
+            self.page.screenshot(path=filepath)
+            logger.info(f"スクリーンショットを保存しました: {filepath}")
+            return filepath
+        except Exception as e:
+            logger.error(f"スクリーンショットの撮影に失敗しました: {e}", exc_info=True)
+            return None
