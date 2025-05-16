@@ -19,8 +19,40 @@
     {% from 'partials/progress_steps.html' import render_progress_steps %}
     {{ render_progress_steps(active_step) }}
 
-    {% if success_screenshot %}
-    <!-- スクリーンショット表示 -->
+    {% if failure_message %}
+    <!-- 失敗メッセージとスクリーンショット表示 -->
+    <div class="simple-card mb-4">
+        <div class="card-title">
+            <h3><i class="bi bi-x-octagon-fill text-danger"></i> 投稿失敗</h3>
+        </div>
+        <div class="alert alert-danger mb-3">
+            <i class="bi bi-exclamation-triangle-fill"></i> {{ failure_message }}
+        </div>
+        {% if failure_screenshot %}
+        <div class="text-center">
+            <img src="{{ failure_screenshot }}" alt="失敗時の画面" class="img-fluid border rounded shadow-sm" style="max-height: 500px;">
+            <p class="text-muted mt-2">失敗時のスクリーンショット</p>
+        </div>
+        {% endif %}
+        {% if session.get(ROBOT_DETECTED_KEY, False) and not failure_screenshot %}
+        <!-- ロボット認証検出で、専用のfailure_screenshotがない場合 (従来の success_screenshot がロボット画面の可能性) -->
+            {% if success_screenshot %}
+            <div class="text-center">
+                <img src="{{ success_screenshot }}" alt="ロボット認証画面" class="img-fluid border rounded shadow-sm" style="max-height: 500px;">
+                <p class="text-muted mt-2">ロボット認証画面のスクリーンショット</p>
+            </div>
+            {% endif %}
+        <div class="mt-3 p-3 bg-light rounded">
+            <h5><i class="bi bi-info-circle-fill text-primary"></i> 対処方法</h5>
+            <ol class="mb-0">
+                <li>しばらく時間をおいてから再度実行してください。</li>
+                <li>または、サロンボードに手動でログインし、CAPTCHAを解決後、再度お試しください。</li>
+            </ol>
+        </div>
+        {% endif %}
+    </div>
+    {% elif success_screenshot %}
+    <!-- スクリーンショット表示 (成功時) -->
     <div class="simple-card mb-4">
         <div class="card-title">
             {% if session.get('robot_detected', False) %}

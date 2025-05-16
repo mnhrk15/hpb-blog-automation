@@ -30,6 +30,9 @@ SELECTED_COUPON_NAME_KEY = 'selected_coupon_name'
 SUCCESS_SCREENSHOT_KEY = 'success_screenshot'
 ROBOT_DETECTED_KEY = 'robot_detected'
 POST_SUCCESS_KEY = 'post_success'
+FAILURE_MESSAGE_KEY = 'failure_message'
+FAILURE_SCREENSHOT_KEY = 'failure_screenshot'
+ERROR_TYPE_KEY = 'error_type'
 
 @bp.route('/')
 @login_required
@@ -45,6 +48,12 @@ def index():
         session.pop(SUCCESS_SCREENSHOT_KEY)
     if ROBOT_DETECTED_KEY in session:
         session.pop(ROBOT_DETECTED_KEY)
+    if FAILURE_MESSAGE_KEY in session:
+        session.pop(FAILURE_MESSAGE_KEY)
+    if FAILURE_SCREENSHOT_KEY in session:
+        session.pop(FAILURE_SCREENSHOT_KEY)
+    if ERROR_TYPE_KEY in session:
+        session.pop(ERROR_TYPE_KEY)
     
     # サロン情報関連のセッションもクリアした方が良いかもしれない
     session.pop(SALON_URL_KEY, None)
@@ -137,10 +146,31 @@ def generate():
     logger.debug(f"SALON_URL_KEY in generate: {salon_url}")
 
     selected_template = session.get(SELECTED_TEMPLATE_KEY, '')
+    
     success_screenshot = None
     if SUCCESS_SCREENSHOT_KEY in session:
-        screenshot_path = session[SUCCESS_SCREENSHOT_KEY]
-        success_screenshot = url_for('uploaded_file', filename=os.path.basename(screenshot_path))
+        absolute_screenshot_path = session[SUCCESS_SCREENSHOT_KEY]
+        if absolute_screenshot_path:
+            try:
+                # UPLOAD_FOLDERからの相対パスに変換
+                relative_screenshot_path = os.path.relpath(absolute_screenshot_path, current_app.config['UPLOAD_FOLDER'])
+                success_screenshot = url_for('uploaded_file', filename=relative_screenshot_path)
+                logger.info(f"Success screenshot URL: {success_screenshot}, Relative path: {relative_screenshot_path}")
+            except ValueError as e:
+                logger.error(f"Error creating relative path for success screenshot: {e}. Absolute: {absolute_screenshot_path}, Upload folder: {current_app.config['UPLOAD_FOLDER']}")
+    
+    failure_message = session.get(FAILURE_MESSAGE_KEY)
+    failure_screenshot = None
+    if FAILURE_SCREENSHOT_KEY in session:
+        absolute_screenshot_path = session[FAILURE_SCREENSHOT_KEY]
+        if absolute_screenshot_path:
+            try:
+                # UPLOAD_FOLDERからの相対パスに変換
+                relative_screenshot_path = os.path.relpath(absolute_screenshot_path, current_app.config['UPLOAD_FOLDER'])
+                failure_screenshot = url_for('uploaded_file', filename=relative_screenshot_path)
+                logger.info(f"Failure screenshot URL: {failure_screenshot}, Relative path: {relative_screenshot_path}")
+            except ValueError as e:
+                logger.error(f"Error creating relative path for failure screenshot: {e}. Absolute: {absolute_screenshot_path}, Upload folder: {current_app.config['UPLOAD_FOLDER']}")
     
     if session.get(POST_SUCCESS_KEY, False):
         active_step = 4
@@ -159,6 +189,8 @@ def generate():
         coupons=coupons,
         selected_template=selected_template,
         success_screenshot=success_screenshot,
+        failure_message=failure_message,
+        failure_screenshot=failure_screenshot,
         active_step=active_step
     )
 
@@ -459,38 +491,84 @@ def post_to_salon_board():
     session.modified = True # 明示的に変更を通知
     
     logger.info("SalonBoardPoster インスタンスを作成します")
-    poster = SalonBoardPoster(slow_mo=200)
+    # スクリーンショット保存パスをConfigから取得して渡す
+    screenshot_path = os.path.join(current_app.config['UPLOAD_FOLDER'], current_app.config.get('SCREENSHOT_SUBFOLDER', 'screenshots')) 
+    # ConfigにSCREENSHOT_FOLDERが直接定義されている場合はそれを使う
+    if 'SCREENSHOT_FOLDER' in current_app.config:
+        screenshot_path = current_app.config['SCREENSHOT_FOLDER']
+    else: # ない場合はUPLOAD_FOLDERの下にscreenshotsを作成
+        screenshot_path = os.path.join(current_app.config['UPLOAD_FOLDER'], 'screenshots')
+        os.makedirs(screenshot_path, exist_ok=True) # フォルダがなければ作成
+
+    poster = SalonBoardPoster(screenshot_folder_path=screenshot_path, slow_mo=200)
     
-    success = False
+    # 結果表示のためのセッションキーをクリア
+    session.pop(POST_SUCCESS_KEY, None)
+    session.pop(SUCCESS_SCREENSHOT_KEY, None)
+    session.pop(FAILURE_MESSAGE_KEY, None)
+    session.pop(FAILURE_SCREENSHOT_KEY, None)
+    session.pop(ROBOT_DETECTED_KEY, None)
+    session.pop(ERROR_TYPE_KEY, None)
+    session.modified = True
+
     try:
         logger.info("ブログ投稿処理を開始します")
         result = poster.execute_post(user_id, password, blog_data)
         
-        if isinstance(result, dict):
-            if not result.get('success') and result.get('robot_detected') and result.get('screenshot_path'):
-                session[SUCCESS_SCREENSHOT_KEY] = result.get('screenshot_path')
-                session[ROBOT_DETECTED_KEY] = True
-                session.modified = True # 明示的に変更を通知
-                flash('サロンボードへの投稿中にロボット認証が検出されました。手動でログインしてください。', 'error')
-                return redirect(url_for('blog.generate'))
-            
-            if result.get('success'):
-                session[SUCCESS_SCREENSHOT_KEY] = result.get('screenshot_path')
-                session[ROBOT_DETECTED_KEY] = False
-                session[POST_SUCCESS_KEY] = True
-                session.modified = True # 明示的に変更を通知
-                flash('サロンボードへのブログ投稿が完了しました', 'success')
-                success = True
-        elif result:
-            session[ROBOT_DETECTED_KEY] = False
+        # result は必ず辞書であることを期待 (poster.py の修正による)
+        if not isinstance(result, dict):
+            logger.error(f"poster.execute_post から予期しない形式の返り値: {result}")
+            flash('ブログ投稿処理で内部エラーが発生しました。管理者にご連絡ください。', 'error')
+            session[POST_SUCCESS_KEY] = False
+            return redirect(url_for('blog.generate'))
+
+        if result.get('success'):
             session[POST_SUCCESS_KEY] = True
-            session.modified = True # 明示的に変更を通知
-            flash('サロンボードへのブログ投稿が完了しました', 'success')
-            success = True
+            if result.get('screenshot_path'):
+                session[SUCCESS_SCREENSHOT_KEY] = result.get('screenshot_path')
+            flash(result.get('message', 'ブログ投稿が完了しました。'), 'success')
         else:
-            flash('サロンボードへの投稿に失敗しました。詳細はログを確認してください。', 'error')
+            session[POST_SUCCESS_KEY] = False
+            error_message = result.get('message', 'ブログ投稿に失敗しました。詳細はログを確認してください。')
+            flash(error_message, 'error')
+            session[FAILURE_MESSAGE_KEY] = error_message
+            if result.get('screenshot_path'):
+                session[FAILURE_SCREENSHOT_KEY] = result.get('screenshot_path')
+            if result.get('error_type') == 'robot_detected':
+                session[ROBOT_DETECTED_KEY] = True
+            session[ERROR_TYPE_KEY] = result.get('error_type', 'unknown')
+            
     except Exception as e:
-        logger.error(f"サロンボード投稿エラー: {str(e)}", exc_info=True)
-        flash(f'サロンボードへの投稿中にエラーが発生しました: {str(e)}', 'error')
+        logger.error(f"サロンボード投稿のルート処理中にエラー: {str(e)}", exc_info=True)
+        flash(f'サロンボードへの投稿処理中に予期せぬエラーが発生しました: {str(e)}', 'error')
+        session[POST_SUCCESS_KEY] = False
+        session[FAILURE_MESSAGE_KEY] = f'サロンボードへの投稿処理中に予期せぬエラーが発生しました: {str(e)}'
     
-    return redirect(url_for('blog.generate')) 
+    session.modified = True # 確実にセッション変更を通知
+    return redirect(url_for('blog.generate'))
+
+@bp.route('/test-screenshot-path')
+@login_required
+def test_screenshot_path():
+    """スクリーンショットパスのテスト用（デバッグ用）"""
+    upload_folder = current_app.config['UPLOAD_FOLDER']
+    screenshot_subfolder = current_app.config.get('SCREENSHOT_SUBFOLDER', 'screenshots')
+    screenshot_folder_from_config = current_app.config.get('SCREENSHOT_FOLDER')
+
+    path_constructed = os.path.join(upload_folder, screenshot_subfolder)
+    
+    final_path = "N/A"
+    if screenshot_folder_from_config:
+        final_path = screenshot_folder_from_config
+    else:
+        final_path = path_constructed
+        os.makedirs(final_path, exist_ok=True)
+
+    return jsonify({
+        "UPLOAD_FOLDER": upload_folder,
+        "SCREENSHOT_SUBFOLDER_from_get": screenshot_subfolder,
+        "SCREENSHOT_FOLDER_from_config": screenshot_folder_from_config,
+        "path_constructed_from_upload_and_subfolder": path_constructed,
+        "final_path_used_for_poster": final_path,
+        "final_path_exists_after_makedirs": os.path.exists(final_path)
+    }) 
