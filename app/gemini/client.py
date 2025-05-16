@@ -15,7 +15,7 @@ class GeminiClient:
             model_name (str, optional): 使用するGeminiモデル名。指定されない場合は設定から取得。
         """
         self.api_key = api_key or current_app.config.get('GEMINI_API_KEY')
-        self.model_name = model_name or current_app.config.get('GEMINI_MODEL', 'gemini-2.0-flash')
+        self.model_name = model_name or current_app.config.get('GEMINI_MODEL_NAME', 'gemini-2.0-flash-lite')
         
         if not self.api_key:
             raise ValueError("Gemini API Keyが設定されていません")

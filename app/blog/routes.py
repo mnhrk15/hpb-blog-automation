@@ -13,7 +13,7 @@ from app.scraper.stylist import StylistScraper
 from app.scraper.coupon import CouponScraper
 from app.salon_board import SalonBoardPoster
 
-logger = logging.getLogger(__name__)
+# logger = logging.getLogger(__name__)
 
 # 画像ファイルの一時保存用セッションキー
 UPLOADED_IMAGES_KEY = 'blog_uploaded_images'
@@ -46,11 +46,18 @@ def index():
     if ROBOT_DETECTED_KEY in session:
         session.pop(ROBOT_DETECTED_KEY)
     
+    # サロン情報関連のセッションもクリアした方が良いかもしれない
+    session.pop(SALON_URL_KEY, None)
+    session.pop(STYLISTS_KEY, None)
+    session.pop(COUPONS_KEY, None)
+    session.modified = True # クリアした場合も変更を通知
+    
     return render_template('blog/index.html', active_step=1)
 
 @bp.route('/upload', methods=['POST'])
 @login_required
 def upload():
+    logger = current_app.logger
     if 'images' not in request.files:
         flash('画像が選択されていません', 'error')
         return redirect(url_for('blog.index'))
@@ -75,65 +82,71 @@ def upload():
         flash('画像のアップロードに失敗しました', 'error')
         return redirect(url_for('blog.index'))
     
-    # アップロードした画像のパスをセッションに保存
     session[UPLOADED_IMAGES_KEY] = uploaded_images
+    logger.debug(f"Uploaded images saved to session ({UPLOADED_IMAGES_KEY}): {session.get(UPLOADED_IMAGES_KEY)}")
     
-    # 最初の画像からヘアスタイル情報を抽出
-    try:
-        extractor = HairStyleExtractor()
-        hair_info = extractor.extract_hair_info(uploaded_images[0])
-        if hair_info:
-            session[HAIR_INFO_KEY] = hair_info
-            logger.info(f"ヘアスタイル情報を抽出しました: {hair_info}")
-    except Exception as e:
-        logger.error(f"ヘアスタイル情報抽出エラー: {str(e)}")
-        # 抽出に失敗しても処理を続行
+    if uploaded_images: # 画像が1枚以上アップロードされている場合のみ実行
+        try:
+            extractor = HairStyleExtractor()
+            # uploaded_images[0] はファイル名なので、フルパスを生成して渡す
+            first_image_filename = uploaded_images[0]
+            first_image_full_path = os.path.join(current_app.config['UPLOAD_FOLDER'], first_image_filename)
+            logger.debug(f"Extracting hair info from: {first_image_full_path}")
+            hair_info = extractor.extract_hair_info(first_image_full_path)
+            if hair_info:
+                session[HAIR_INFO_KEY] = hair_info
+                logger.info(f"ヘアスタイル情報を抽出しました: {hair_info}")
+                logger.debug(f"Hair info saved to session ({HAIR_INFO_KEY}): {session.get(HAIR_INFO_KEY)}")
+            else:
+                logger.warning("ヘアスタイル情報の抽出に失敗しました。hair_info is None or empty.")
+                # セッションにキーが存在しない場合や空の場合の挙動を明確にするため、Noneを意図的に入れるか、キー自体を削除することも検討
+                session.pop(HAIR_INFO_KEY, None) # 抽出失敗時はクリア
+        except Exception as e:
+            logger.error(f"ヘアスタイル情報抽出エラー: {str(e)}")
+            session.pop(HAIR_INFO_KEY, None) # エラー時もクリア
     
     return redirect(url_for('blog.generate'))
 
 @bp.route('/generate')
 @login_required
 def generate():
-    # アップロードされた画像をチェック
+    logger = current_app.logger
+    logger.debug(f"Entering generate route. Session ID: {session.sid if hasattr(session, 'sid') else 'N/A - default session'}")
+    logger.debug(f"Session keys available: {list(session.keys())}")
+
     uploaded_images = session.get(UPLOADED_IMAGES_KEY, [])
+    logger.debug(f"Retrieved from session ({UPLOADED_IMAGES_KEY}): {uploaded_images}")
     if not uploaded_images:
         flash('最初に画像をアップロードしてください', 'error')
         return redirect(url_for('blog.index'))
     
-    # 画像URLを作成
     image_urls = [get_image_url(img) for img in uploaded_images]
-    
-    # 生成済みコンテンツがあれば取得
+    logger.debug(f"Generated image_urls: {image_urls}")
+
     generated_content = session.get(GENERATED_CONTENT_KEY, {})
-    
-    # ヘアスタイル情報を取得
+    logger.debug(f"Retrieved from session ({GENERATED_CONTENT_KEY}): {generated_content}")
+
     hair_info = session.get(HAIR_INFO_KEY, {})
+    logger.debug(f"Retrieved from session ({HAIR_INFO_KEY}): {hair_info}")
     
-    # サロンURL、スタイリスト情報、クーポン情報を取得
     salon_url = session.get(SALON_URL_KEY, '')
     stylists = session.get(STYLISTS_KEY, [])
     coupons = session.get(COUPONS_KEY, [])
-    selected_coupon_name = session.get(SELECTED_COUPON_NAME_KEY, '')
-    
-    # テンプレート情報を取得
+    logger.debug(f"STYLISTS_KEY in generate: {stylists}")
+    logger.debug(f"COUPONS_KEY in generate: {coupons}")
+    logger.debug(f"SALON_URL_KEY in generate: {salon_url}")
+
     selected_template = session.get(SELECTED_TEMPLATE_KEY, '')
-    
-    # 投稿成功スクリーンショットを取得（あれば）
     success_screenshot = None
     if SUCCESS_SCREENSHOT_KEY in session:
         screenshot_path = session[SUCCESS_SCREENSHOT_KEY]
-        # ファイル名だけを取得して画像URLを生成
         success_screenshot = url_for('uploaded_file', filename=os.path.basename(screenshot_path))
     
-    # プログレスステップの状態を決定
     if session.get(POST_SUCCESS_KEY, False):
-        # 投稿成功時はステップ4
         active_step = 4
     elif generated_content:
-        # コンテンツ生成済みはステップ3
         active_step = 3
     else:
-        # ヘアスタイル分析までならステップ2
         active_step = 2
     
     return render_template(
@@ -152,60 +165,51 @@ def generate():
 @bp.route('/generate-content', methods=['POST', 'GET'])
 @login_required
 def generate_content():
-    # アップロードされた画像をチェック
+    logger = current_app.logger
     uploaded_images = session.get(UPLOADED_IMAGES_KEY, [])
     if not uploaded_images:
         flash('最初に画像をアップロードしてください', 'error')
         return redirect(url_for('blog.index'))
     
-    # GETリクエストの場合は再生成
     force_regenerate = request.method == 'GET'
-    
-    # 生成済みのコンテンツが既にあり、かつ再生成でない場合
     generated_content = session.get(GENERATED_CONTENT_KEY, {})
     if generated_content and not force_regenerate:
         return redirect(url_for('blog.generate'))
     
     try:
-        # ヘアスタイル情報を取得
         hair_info = session.get(HAIR_INFO_KEY, {})
-        
-        # ブログコンテンツを生成（構造化データ形式）
         logger.info("構造化ブログデータの生成を開始します")
         generator = BlogGenerator()
-        content = generator.generate_structured_blog_from_images(uploaded_images, hair_info)
+        image_full_paths = [os.path.join(current_app.config['UPLOAD_FOLDER'], img) for img in uploaded_images]
+        logger.debug(f"Image full paths for blog generation: {image_full_paths}")
+
+        content = generator.generate_structured_blog_from_images(image_full_paths, hair_info)
         
         if not content or not content.get('title'):
             logger.warning("構造化データ生成に失敗したため、従来の方法にフォールバックします")
-            # 従来の方法で生成を試みる
-            content = generator.generate_blog_from_images(uploaded_images)
+            content = generator.generate_blog_from_images(image_full_paths)
             if not content:
                 flash('ブログ内容の生成に失敗しました。もう一度お試しください。', 'error')
                 return redirect(url_for('blog.generate'))
         
-        # 構造化データの詳細をログ出力
         try:
             logger.debug(f"構造化データ: {json.dumps(content, ensure_ascii=False)[:500]}...")
         except Exception as json_err:
             logger.error(f"構造化データのJSONシリアライズエラー: {json_err}")
             
-        # 構造化データから従来形式への変換（互換性のため）
         if 'sections' in content and isinstance(content['sections'], list):
             combined_text = ""
             for section in content['sections']:
                 if section.get('type') == 'text':
                     combined_text += section.get('content', '') + "\n\n"
-            
-            # 従来の形式で上書き
             content['content'] = combined_text.strip()
             logger.info(f"構造化データから変換した従来形式のコンテンツ: {len(content['content'])}文字")
         elif 'content' not in content or not content['content']:
-            # contentキーがない場合、空文字列を設定
             content['content'] = ""
             logger.warning("生成されたコンテンツが空です")
 
-        # 生成したコンテンツをセッションに保存
         session[GENERATED_CONTENT_KEY] = content
+        session.modified = True # 明示的に変更を通知
         logger.info(f"ブログ内容生成成功: タイトル '{content.get('title')}', コンテンツ長: {len(content.get('content', ''))}文字, セクション数: {len(content.get('sections', []))}")
         flash('ブログ内容を生成しました', 'success')
     except Exception as e:
@@ -232,11 +236,11 @@ def save_content():
         flash('内容は必須です', 'error')
         return redirect(url_for('blog.generate'))
     
-    # 編集された内容をセッションに保存
     current_content = session.get(GENERATED_CONTENT_KEY, {})
     current_content['title'] = title
     current_content['content'] = content
     session[GENERATED_CONTENT_KEY] = current_content
+    session.modified = True # 明示的に変更を通知
     
     flash('ブログ内容を保存しました', 'success')
     return redirect(url_for('blog.generate'))
@@ -244,86 +248,66 @@ def save_content():
 @bp.route('/hair-info', methods=['GET'])
 @login_required
 def hair_info():
-    # ヘアスタイル情報を取得
-    hair_info = session.get(HAIR_INFO_KEY, {})
-    if not hair_info:
+    hair_info_data = session.get(HAIR_INFO_KEY, {})
+    if not hair_info_data:
         flash('ヘアスタイル情報がありません', 'error')
         return redirect(url_for('blog.generate'))
-    
-    # アップロードされた画像を取得
-    uploaded_images = session.get(UPLOADED_IMAGES_KEY, [])
-    image_url = get_image_url(uploaded_images[0]) if uploaded_images else None
-    
-    return render_template(
-        'blog/hair_info.html',
-        hair_info=hair_info,
-        image_url=image_url
-    )
+    return render_template('blog/hair_info.html', hair_info=hair_info_data, active_step=2)
 
 @bp.route('/analyze-hair', methods=['POST'])
 @login_required
 def analyze_hair():
-    # アップロードされた画像をチェック
     uploaded_images = session.get(UPLOADED_IMAGES_KEY, [])
     if not uploaded_images:
-        flash('最初に画像をアップロードしてください', 'error')
-        return redirect(url_for('blog.index'))
-    
+        flash('画像がアップロードされていません', 'error')
+        return redirect(url_for('blog.generate'))
+
+    image_to_analyze = request.form.get('image_filename')
+    if not image_to_analyze or image_to_analyze not in uploaded_images:
+        flash('分析対象の画像が見つかりません', 'error')
+        return redirect(url_for('blog.generate'))
+
     try:
-        # 最初の画像からヘアスタイル情報を抽出
         extractor = HairStyleExtractor()
-        hair_info = extractor.extract_hair_info(uploaded_images[0])
-        
-        if hair_info:
-            # 抽出成功
-            session[HAIR_INFO_KEY] = hair_info
-            logger.info(f"ヘアスタイル情報を抽出しました: {hair_info}")
-            flash('ヘアスタイルの分析が完了しました', 'success')
+        analysis_result = extractor.analyze_hair_style_from_image(image_to_analyze)
+        if analysis_result:
+            session[HAIR_INFO_KEY] = analysis_result
+            session.modified = True # 明示的に変更を通知
+            logger.info(f"ヘアスタイル分析結果を更新: {analysis_result}")
+            flash('ヘアスタイル分析が完了しました', 'success')
         else:
-            # 抽出結果が空
-            flash('ヘアスタイルの特徴を検出できませんでした。別の画像をお試しください。', 'warning')
+            flash('ヘアスタイル分析に失敗しました', 'error')
     except Exception as e:
-        logger.error(f"ヘアスタイル情報抽出エラー: {str(e)}")
-        flash(f'ヘアスタイルの分析中にエラーが発生しました: {str(e)}', 'error')
-    
+        logger.error(f"ヘアスタイル分析エラー: {e}", exc_info=True)
+        flash(f'ヘアスタイル分析中にエラーが発生しました: {e}', 'error')
     return redirect(url_for('blog.generate'))
 
 @bp.route('/save-hair-info', methods=['POST'])
 @login_required
 def save_hair_info():
-    """ヘアスタイル情報の編集内容を保存する"""
-    # 現在のヘアスタイル情報を取得
-    hair_info = session.get(HAIR_INFO_KEY, {})
-    if not hair_info:
-        hair_info = {}
-    
-    # フォームからの入力を取得
     hairstyle = request.form.get('hairstyle', '').strip()
     color = request.form.get('color', '').strip()
-    features_text = request.form.get('features', '').strip()
+    features_str = request.form.get('features', '').strip()
     face_shape = request.form.get('face_shape', '').strip()
     season = request.form.get('season', '').strip()
-    
-    # 特徴をリストに変換
-    features = []
-    if features_text:
-        features = [f.strip() for f in features_text.split(',')]
-        features = [f for f in features if f]  # 空の要素を除外
-    
-    # 日本語キーと英語キーの両方を更新
+
+    hair_info = session.get(HAIR_INFO_KEY, {})
+    if not hair_info: # 万が一HAIR_INFO_KEYがなければ初期化
+        hair_info = {}
+        
     hair_info['hairstyle'] = hairstyle
-    hair_info['ヘアスタイル'] = hairstyle
+    hair_info['ヘアスタイル'] = hairstyle # 互換性のため両方保持
     hair_info['color'] = color
     hair_info['髪色'] = color
-    hair_info['features'] = features
-    hair_info['特徴'] = features
+    hair_info['features'] = [f.strip() for f in features_str.split(',') if f.strip()]
+    hair_info['特徴'] = [f.strip() for f in features_str.split(',') if f.strip()]
     hair_info['face_shape'] = face_shape
     hair_info['顔型'] = face_shape
     hair_info['season'] = season
     hair_info['季節'] = season
     
-    # セッションに保存
     session[HAIR_INFO_KEY] = hair_info
+    session.modified = True # 明示的に変更を通知
     logger.info(f"ヘアスタイル情報を更新しました: {hair_info}")
     flash('ヘアスタイル情報を保存しました', 'success')
     
@@ -332,38 +316,47 @@ def save_hair_info():
 @bp.route('/fetch-salon-info', methods=['POST'])
 @login_required
 def fetch_salon_info():
-    # サロンURLの取得
+    logger = current_app.logger
     salon_url = request.form.get('salon_url', '').strip()
     
     if not salon_url:
         flash('サロンURLを入力してください', 'error')
         return redirect(url_for('blog.generate'))
     
-    # URLの基本的な検証
     if not salon_url.startswith('https://beauty.hotpepper.jp/'):
         flash('有効なHotPepper Beauty URLを入力してください', 'error')
         return redirect(url_for('blog.generate'))
     
     try:
-        # スタイリスト情報の取得
+        logger.info(f"サロン情報取得開始: {salon_url}")
         stylist_scraper = StylistScraper(salon_url)
         stylists = stylist_scraper.get_stylists()
         
-        # クーポン情報の取得
         coupon_scraper = CouponScraper(salon_url)
-        coupons_data = coupon_scraper.get_coupons() # 辞書のリストを取得
+        coupons_data = coupon_scraper.get_coupons()
+        coupons = [coupon['name'] for coupon in coupons_data if 'name' in coupon]
         
-        # クーポン名のリストに変換
-        coupons = [coupon['name'] for coupon in coupons_data if 'name' in coupon] 
+        logger.debug(f"STYLISTS_KEY fetched: {stylists}")
+        logger.debug(f"COUPONS_KEY fetched: {coupons}") # 変更: (full) を削除、ログメッセージをシンプルに
         
-        # セッションに保存
+        # セッションに保存するクーポン数の制限を解除
+        # MAX_COUPONS_IN_SESSION = 20 # 削除
+        # session_coupons = coupons[:MAX_COUPONS_IN_SESSION] # 削除
+        # if len(coupons) > MAX_COUPONS_IN_SESSION: # 削除
+        #     logger.warning(f"セッションに保存するクーポンが多すぎるため、最初の{MAX_COUPONS_IN_SESSION}件に制限しました。全{len(coupons)}件") # 削除
+
         session[SALON_URL_KEY] = salon_url
         session[STYLISTS_KEY] = stylists
-        session[COUPONS_KEY] = coupons # 文字列のリストを保存
+        session[COUPONS_KEY] = coupons # 変更: session_coupons から coupons に戻す
+        session.modified = True # 明示的にセッション変更を通知
         
-        flash(f'サロン情報を取得しました。スタイリスト: {len(stylists)}人、クーポン: {len(coupons)}件', 'success')
+        logger.debug(f"STYLISTS_KEY in session after set: {session.get(STYLISTS_KEY)}")
+        logger.debug(f"COUPONS_KEY in session after set: {session.get(COUPONS_KEY)}")
+        logger.debug(f"SALON_URL_KEY in session after set: {session.get(SALON_URL_KEY)}")
+        
+        flash(f'サロン情報を取得しました。スタイリスト: {len(stylists)}人、クーポン: {len(coupons)}件', 'success') # 変更: flashメッセージを元に戻す
     except Exception as e:
-        logger.error(f"サロン情報取得エラー: {str(e)}")
+        logger.error(f"サロン情報取得エラー: {str(e)}", exc_info=True)
         flash(f'サロン情報の取得に失敗しました: {str(e)}', 'error')
     
     return redirect(url_for('blog.generate'))
@@ -373,13 +366,13 @@ def fetch_salon_info():
 def save_template():
     template_content = request.form.get('template', '').strip()
     session[SELECTED_TEMPLATE_KEY] = template_content
+    session.modified = True # 明示的に変更を通知
     flash('テンプレートを保存しました', 'success')
     return redirect(url_for('blog.generate'))
 
 @bp.route('/prepare-post', methods=['POST'])
 @login_required
 def prepare_post():
-    # 必要な情報がすべて揃っているか確認
     if not session.get(GENERATED_CONTENT_KEY):
         flash('ブログ内容を生成してください', 'error')
         return redirect(url_for('blog.generate'))
@@ -388,14 +381,12 @@ def prepare_post():
         flash('画像をアップロードしてください', 'error')
         return redirect(url_for('blog.generate'))
     
-    # 入力内容を取得
     title = request.form.get('title', '').strip()
     content = request.form.get('content', '').strip()
     stylist_id = request.form.get('stylist_id', '').strip()
     selected_coupon = request.form.get('selected_coupon', '').strip()
     template = request.form.get('template', '').strip()
     
-    # 入力内容の検証
     if not title:
         flash('タイトルは必須です', 'error')
         return redirect(url_for('blog.generate'))
@@ -404,15 +395,14 @@ def prepare_post():
         flash('本文は必須です', 'error')
         return redirect(url_for('blog.generate'))
     
-    # 投稿準備画面に遷移（ここではまだ実装せず、将来の拡張用に置いておく）
     flash('投稿準備が完了しました。サロンボードへのログイン情報を入力してください。', 'success')
     return redirect(url_for('blog.generate'))
 
 @bp.route('/post-to-salon-board', methods=['POST'])
 @login_required
 def post_to_salon_board():
+    logger = current_app.logger
     """サロンボードにブログを投稿する"""
-    # 必要な情報がすべて揃っているか確認
     uploaded_images = session.get(UPLOADED_IMAGES_KEY, [])
     if not uploaded_images:
         flash('画像がアップロードされていません', 'error')
@@ -423,7 +413,6 @@ def post_to_salon_board():
         flash('ブログ内容が生成されていません', 'error')
         return redirect(url_for('blog.generate'))
     
-    # サロンボードのログイン情報
     user_id = request.form.get('salon_board_user_id', '').strip()
     password = request.form.get('salon_board_password', '').strip()
     
@@ -431,38 +420,27 @@ def post_to_salon_board():
         flash('サロンボードのユーザーIDとパスワードを入力してください', 'error')
         return redirect(url_for('blog.generate'))
     
-    # スタイリストIDの取得
     stylist_id = request.form.get('stylist_id', '').strip()
     if not stylist_id:
         flash('スタイリストを選択してください', 'error')
         return redirect(url_for('blog.generate'))
     
-    # クーポン名の取得
     selected_coupon = request.form.get('selected_coupon', '').strip()
-    
-    # SalonBoardPosterに渡す形式を調整 (空でなければリストに入れる)
     coupon_names_list = [selected_coupon] if selected_coupon else []
-    
-    # テンプレートの取得
     template = session.get(SELECTED_TEMPLATE_KEY, '')
-    
-    # 画像のフルパスを取得
     image_full_paths = [os.path.join(current_app.config['UPLOAD_FOLDER'], img) for img in uploaded_images]
     
-    # ブログデータの作成
-    # 構造化形式か従来形式かを確認
     if 'sections' in generated_content and isinstance(generated_content['sections'], list):
         logger.info(f"構造化データ形式でブログを投稿します。セクション数: {len(generated_content['sections'])}")
         blog_data = {
             'title': generated_content['title'],
-            'sections': generated_content['sections'],  # 構造化データ
+            'sections': generated_content['sections'],
             'stylist_id': stylist_id,
             'image_paths': image_full_paths,
             'coupon_names': coupon_names_list,
             'template': template
         }
     else:
-        # 従来形式 (フォールバック対応)
         logger.info("従来のデータ形式でブログを投稿します")
         blog_data = {
             'title': generated_content['title'],
@@ -473,47 +451,44 @@ def post_to_salon_board():
             'template': template
         }
     
-    # ログイン情報と選択内容をセッションに保存（キーと値を変更）
     session[SALON_BOARD_USER_ID_KEY] = user_id
     session[SALON_BOARD_STYLIST_ID_KEY] = stylist_id
     session[SELECTED_COUPON_NAME_KEY] = selected_coupon
+    session.modified = True # 明示的に変更を通知
     
-    # SalonBoardPosterのインスタンスを作成
     logger.info("SalonBoardPoster インスタンスを作成します")
     poster = SalonBoardPoster(slow_mo=200)
     
     success = False
     try:
         logger.info("ブログ投稿処理を開始します")
-        # サロンボードへの投稿を実行
         result = poster.execute_post(user_id, password, blog_data)
         
         if isinstance(result, dict):
-            # ロボット認証が検出された場合
             if not result.get('success') and result.get('robot_detected') and result.get('screenshot_path'):
                 session[SUCCESS_SCREENSHOT_KEY] = result.get('screenshot_path')
                 session[ROBOT_DETECTED_KEY] = True
+                session.modified = True # 明示的に変更を通知
                 flash('サロンボードへの投稿中にロボット認証が検出されました。手動でログインしてください。', 'error')
                 return redirect(url_for('blog.generate'))
             
-            # 成功した場合
             if result.get('success'):
-                # スクリーンショットパスをセッションに保存
                 session[SUCCESS_SCREENSHOT_KEY] = result.get('screenshot_path')
                 session[ROBOT_DETECTED_KEY] = False
-                session[POST_SUCCESS_KEY] = True  # 投稿成功フラグをセット
+                session[POST_SUCCESS_KEY] = True
+                session.modified = True # 明示的に変更を通知
                 flash('サロンボードへのブログ投稿が完了しました', 'success')
                 success = True
         elif result:
-            # 単なる True の場合（スクリーンショットなし)
             session[ROBOT_DETECTED_KEY] = False
-            session[POST_SUCCESS_KEY] = True  # 投稿成功フラグをセット
+            session[POST_SUCCESS_KEY] = True
+            session.modified = True # 明示的に変更を通知
             flash('サロンボードへのブログ投稿が完了しました', 'success')
             success = True
         else:
             flash('サロンボードへの投稿に失敗しました。詳細はログを確認してください。', 'error')
     except Exception as e:
-        logger.error(f"サロンボード投稿エラー: {str(e)}")
+        logger.error(f"サロンボード投稿エラー: {str(e)}", exc_info=True)
         flash(f'サロンボードへの投稿中にエラーが発生しました: {str(e)}', 'error')
     
     return redirect(url_for('blog.generate')) 
