@@ -257,6 +257,7 @@ def hair_info():
 @bp.route('/analyze-hair', methods=['POST'])
 @login_required
 def analyze_hair():
+    logger = current_app.logger
     uploaded_images = session.get(UPLOADED_IMAGES_KEY, [])
     if not uploaded_images:
         flash('画像がアップロードされていません', 'error')
@@ -285,6 +286,7 @@ def analyze_hair():
 @bp.route('/save-hair-info', methods=['POST'])
 @login_required
 def save_hair_info():
+    logger = current_app.logger
     hairstyle = request.form.get('hairstyle', '').strip()
     color = request.form.get('color', '').strip()
     features_str = request.form.get('features', '').strip()
