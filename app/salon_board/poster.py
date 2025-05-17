@@ -1419,13 +1419,13 @@ try {{     // Escaped
         """ブログを投稿する"""
         default_success_result = {
             'success': True, 
-            'message': 'ブログの投稿（未反映登録）に成功しました。', 
+            'message': 'ブログの投稿処理（確認ページでの最終アクション）に成功しました。', # メッセージを汎用的に変更
             'screenshot_path': None, 
             'error_type': None
         }
         default_failure_result = {
             'success': False, 
-            'message': 'ブログの投稿（未反映登録）に失敗しました。', 
+            'message': 'ブログの投稿処理（確認ページでの最終アクション）に失敗しました。', # メッセージを汎用的に変更
             'screenshot_path': None, 
             'error_type': self.ET_POST_BLOG_GENERAL
         }
@@ -1684,12 +1684,14 @@ try {{     // Escaped
                 logger.warning("処理完了後（？）にロボット認証が検出されました。")
                 # 警告としてSS。robot_detected フラグは立てない（投稿自体は成功している可能性があるため）
 
-            logger.info("ブログの「登録・未反映」処理が完了しました")
+            logger.info(f"ブログの「{target_button_name}」処理が完了しました") # target_button_name を使用
             success_ss_path = self.take_screenshot(prefix="post_success_")
+            # メッセージを動的に設定
+            default_success_result['message'] = f'ブログの「{target_button_name}」処理に成功しました。'
             return {**default_success_result, 'screenshot_path': success_ss_path}
             
         except Exception as e:
-            logger.error(f"ブログ投稿処理（未反映登録）中にエラー: {e}", exc_info=True)
+            logger.error(f"ブログ投稿処理（確認ページでの最終アクション）中にエラー: {e}", exc_info=True) # メッセージを汎用的に変更
             ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "post_blog_exception_")
             return {**default_failure_result, 
                     'message': f"ブログ投稿処理中に予期せぬエラー: {str(e)}",
@@ -1720,12 +1722,13 @@ try {{     // Escaped
 
     def _step_post_blog_data(self, blog_data):
         """Execute post step: Fill form and post blog data."""
-        logger.info("ステップ3/3: ブログデータの入力と投稿（未反映登録）を開始します。")
+        logger.info("ステップ3/3: ブログデータの入力と投稿処理を開始します。") # 「（未反映登録）」を削除
         post_result = self.post_blog(blog_data) # post_blogは辞書を返すようになった
         if not post_result['success']:
             logger.error(f"ブログデータの入力・投稿ステップで失敗しました: {post_result.get('message')}")
         else:
-            logger.info("ステップ3/3: ブログデータの入力・投稿（未反映登録）成功。")
+            # post_result['message'] に具体的なアクション名が含まれるように変更したため、それを利用
+            logger.info(f"ステップ3/3: {post_result.get('message', 'ブログデータの入力・投稿処理が完了しました。')}")
         return post_result # post_blogから返された詳細辞書をそのまま返す
 
     # --- Public Method ---
