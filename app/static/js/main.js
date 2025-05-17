@@ -27,6 +27,11 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // ステップナビゲーションのスクロール処理
     highlightCurrentStep();
+
+    // ブログテンプレートマネージャーの初期化 (generate.html の場合のみ実行)
+    if (document.getElementById('template-content')) { // generate.html かどうかの簡易的な判定
+        initBlogTemplateManager();
+    }
 });
 
 /**
@@ -35,10 +40,32 @@ document.addEventListener('DOMContentLoaded', function() {
 function setupFormLoading() {
     const forms = document.querySelectorAll('form:not(.no-loading)');
     forms.forEach(form => {
-        form.addEventListener('submit', function() {
+        form.addEventListener('submit', function(event) { 
             // ページ位置を保存
             saveScrollPosition();
             
+            // もし現在のフォームが 'post-form' なら、テンプレート内容を追加
+            if (this.id === 'post-form') {
+                const templateContentEl = document.getElementById('template-content');
+                if (templateContentEl && templateContentEl.value.trim() !== '') {
+                    let hiddenTemplateInput = this.querySelector('input[name="blog_footer_template"]');
+                    if (!hiddenTemplateInput) {
+                        hiddenTemplateInput = document.createElement('input');
+                        hiddenTemplateInput.type = 'hidden';
+                        hiddenTemplateInput.name = 'blog_footer_template'; // サーバー側で受け取るための名前
+                        this.appendChild(hiddenTemplateInput);
+                    }
+                    hiddenTemplateInput.value = templateContentEl.value;
+                }
+            } else if (this.id === 'salon-info-form') {
+                // サロン情報取得フォームの場合、現在のテンプレート内容を隠しフィールドにコピー
+                const templateContentEl = document.getElementById('template-content');
+                const hiddenTemplateContentForSalonFetchEl = document.getElementById('hidden-template-content-for-salon-fetch');
+                if (templateContentEl && hiddenTemplateContentForSalonFetchEl) {
+                    hiddenTemplateContentForSalonFetchEl.value = templateContentEl.value;
+                }
+            }
+
             // ローディングオーバーレイを作成
             const loadingOverlay = document.createElement('div');
             loadingOverlay.className = 'loading-overlay';
@@ -101,14 +128,14 @@ function setupCharacterCounter() {
         const titleCount = document.createElement('div');
         titleCount.className = 'text-muted text-end small';
         titleCount.id = 'title-counter';
-        titleCount.innerHTML = `<span id="title-count">${titleInput.value.length}</span>/25文字`;
+        titleCount.innerHTML = `<span id="title-count">${titleInput.value.length}</span>/50文字`;
         titleInput.parentNode.insertBefore(titleCount, titleInput.nextSibling);
         
         titleInput.addEventListener('input', function() {
             const count = this.value.length;
             document.getElementById('title-count').textContent = count;
             
-            if (count > 25) {
+            if (count > 50) {
                 titleCount.classList.add('text-danger');
                 titleCount.classList.remove('text-muted');
             } else {
@@ -158,5 +185,116 @@ function highlightCurrentStep() {
                 block: 'center'
             });
         }, 100);
+    }
+}
+
+const LS_BLOG_TEMPLATES_KEY = 'blogTemplates';
+
+function initBlogTemplateManager() {
+    const templateContentEl = document.getElementById('template-content');
+    const templateNameEl = document.getElementById('local-template-name');
+    const saveLocalBtn = document.getElementById('save-local-template-btn');
+    const templateSelectEl = document.getElementById('local-template-select');
+    const deleteLocalBtn = document.getElementById('delete-local-template-btn');
+
+    if (!templateContentEl || !saveLocalBtn || !templateSelectEl || !deleteLocalBtn || !templateNameEl) {
+        // console.warn('Template manager UI elements not found. Skipping initialization.');
+        return;
+    }
+
+    loadTemplatesIntoSelect();
+
+    saveLocalBtn.addEventListener('click', function() {
+        const name = templateNameEl.value.trim();
+        const content = templateContentEl.value;
+        if (!name) {
+            alert('テンプレート名を入力してください。');
+            templateNameEl.focus();
+            return;
+        }
+        if (!content.trim()) {
+            alert('保存するテンプレート内容がありません。');
+            templateContentEl.focus();
+            return;
+        }
+        saveTemplate(name, content);
+        templateNameEl.value = ''; // 名前入力欄をクリア
+        loadTemplatesIntoSelect(); // ドロップダウン更新
+        templateSelectEl.value = name; // 保存したテンプレートを選択状態にする
+        alert(`テンプレート「${name}」をローカルに保存しました。`);
+    });
+
+    templateSelectEl.addEventListener('change', function() {
+        const selectedName = this.value;
+        if (selectedName) {
+            const template = getTemplateByName(selectedName);
+            if (template) {
+                templateContentEl.value = template.content;
+                templateNameEl.value = template.name; // 名前入力欄にも反映 (編集用)
+            }
+        } else {
+            // 「選択してください」が選ばれたらクリア（任意）
+            // templateContentEl.value = '';
+            // templateNameEl.value = '';
+        }
+    });
+
+    deleteLocalBtn.addEventListener('click', function() {
+        const selectedName = templateSelectEl.value;
+        if (!selectedName) {
+            alert('削除するテンプレートを選択してください。');
+            return;
+        }
+        if (confirm(`テンプレート「${selectedName}」をローカルストレージから削除しますか？`)) {
+            deleteTemplate(selectedName);
+            loadTemplatesIntoSelect();
+            templateContentEl.value = ''; // テキストエリアをクリア
+            templateNameEl.value = ''; // 名前入力欄をクリア
+            alert(`テンプレート「${selectedName}」を削除しました。`);
+        }
+    });
+}
+
+function getAllTemplates() {
+    return JSON.parse(localStorage.getItem(LS_BLOG_TEMPLATES_KEY)) || {};
+}
+
+function saveTemplate(name, content) {
+    const templates = getAllTemplates();
+    templates[name] = { name: name, content: content, savedAt: new Date().toISOString() }; 
+    localStorage.setItem(LS_BLOG_TEMPLATES_KEY, JSON.stringify(templates));
+}
+
+function getTemplateByName(name) {
+    const templates = getAllTemplates();
+    return templates[name] || null;
+}
+
+function deleteTemplate(name) {
+    const templates = getAllTemplates();
+    delete templates[name];
+    localStorage.setItem(LS_BLOG_TEMPLATES_KEY, JSON.stringify(templates));
+}
+
+function loadTemplatesIntoSelect() {
+    const templateSelectEl = document.getElementById('local-template-select');
+    if (!templateSelectEl) return;
+
+    const templates = getAllTemplates();
+    const sortedTemplateNames = Object.keys(templates).sort(); 
+
+    const previouslySelected = templateSelectEl.value;
+
+    templateSelectEl.innerHTML = '<option value="">-- ローカルテンプレートを選択 --</option>';
+
+    sortedTemplateNames.forEach(name => {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        templateSelectEl.appendChild(option);
+    });
+
+    if (previouslySelected && templates[previouslySelected]) {
+        templateSelectEl.value = previouslySelected;
     }
 } 

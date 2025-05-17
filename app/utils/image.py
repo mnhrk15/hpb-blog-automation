@@ -67,7 +67,11 @@ def get_image_mime_type(image_path):
                     return 'image/gif'
                 else:
                     return 'application/octet-stream'
-        except:
+        except IOError as e: # IOErrorを捕捉
+            current_app.logger.warning(f"MIME type detection error for {image_path} using Pillow: {e}")
+            return 'application/octet-stream'
+        except Exception as e: # その他の予期せぬエラー
+            current_app.logger.error(f"Unexpected error in MIME type detection for {image_path}: {e}")
             return 'application/octet-stream'
 
 def get_full_image_path(relative_path):
@@ -123,7 +127,12 @@ def resize_image_if_needed(image_path, max_size=5*1024*1024):
             resized_img = img.resize((new_width, new_height), Image.LANCZOS)
             resized_img.save(image_path, quality=85, optimize=True)
             
+            current_app.logger.info(f"Image resized: {image_path}")
             return True
+    except IOError as e:
+        current_app.logger.error(f"Image resize (IOError) for {image_path}: {e}")
+        return False
     except Exception as e:
-        print(f"画像リサイズエラー: {e}")
+        # print(f"画像リサイズエラー: {e}") # 古いprintは削除
+        current_app.logger.error(f"Image resize (Exception) for {image_path}: {e}")
         return False 

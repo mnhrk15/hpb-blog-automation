@@ -1,6 +1,7 @@
 from flask import render_template, redirect, url_for, request, session, flash, current_app
 from app.auth import bp
 from functools import wraps
+import hmac
 
 # 認証のためのセッションキー
 AUTH_SESSION_KEY = 'authenticated'
@@ -17,10 +18,10 @@ def login_required(f):
 @bp.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        password = request.form.get('password')
-        app_password = current_app.config['APP_PASSWORD']
+        password = request.form.get('password', '')
+        app_password = current_app.config.get('APP_PASSWORD', '')
         
-        if password == app_password:
+        if hmac.compare_digest(password, app_password):
             session[AUTH_SESSION_KEY] = True
             return redirect(url_for('blog.index'))
         else:
