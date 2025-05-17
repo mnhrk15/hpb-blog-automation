@@ -38,5 +38,5 @@ class Config:
     # SESSION_FILE_THRESHOLD = 500 # セッションファイルが多くなった場合の閾値（オプション）
 
     # ログ設定
-    LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').upper()
+    LOG_LEVEL = os.environ.get('LOG_LEVEL', 'DEBUG').upper()
     LOG_FILE_PATH = os.environ.get('LOG_FILE_PATH', 'app.log') 

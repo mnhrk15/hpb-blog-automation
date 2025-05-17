@@ -74,7 +74,9 @@ class GeminiClient:
             return response.text
         
         except Exception as e:
-            current_app.logger.error(f"Gemini API エラー: {str(e)}")
+            current_app.logger.error(f"Gemini API エラー ({type(e).__name__}): {str(e)}")
+            # スタックトレースもログに出力するとより詳細なデバッグが可能
+            # current_app.logger.exception("Gemini API エラー詳細:") 
             return None
     
     def extract_title_and_content(self, generated_text):
@@ -145,7 +147,8 @@ class GeminiClient:
             }
             
         except Exception as e:
-            current_app.logger.error(f"テキスト抽出エラー: {str(e)}")
+            current_app.logger.error(f"テキスト抽出エラー ({type(e).__name__}): {str(e)}")
+            # current_app.logger.exception("テキスト抽出エラー詳細:")
             return {
                 "title": "テキスト抽出エラー",
                 "content": generated_text or "コンテンツを抽出できませんでした。"

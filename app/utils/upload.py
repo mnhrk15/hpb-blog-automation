@@ -35,7 +35,9 @@ def get_safe_filename(filename):
         ext = ''
     
     # ランダムなUUIDを生成して拡張子と組み合わせる
-    safe_name = f"{uuid.uuid4().hex}.{ext}"
+    safe_name = uuid.uuid4().hex
+    if ext: # 拡張子がある場合のみドットと拡張子を付加
+        safe_name = f"{safe_name}.{ext}"
     return safe_name
 
 def save_uploaded_file(file, destination=None):
