@@ -7,7 +7,12 @@ from app.gemini.prompts import (
     BLOG_GENERATION_PROMPT,
     MULTI_IMAGE_BLOG_PROMPT,
     SIMPLE_BLOG_PROMPT,
-    STRUCTURED_BLOG_PROMPT
+    STRUCTURED_BLOG_PROMPT_BASE,
+    PROMPT_FOR_1_IMAGE,
+    PROMPT_FOR_2_IMAGES,
+    PROMPT_FOR_3_IMAGES,
+    PROMPT_FOR_4_IMAGES,
+    HAIR_INFO_PROMPT_SUFFIX
 )
 
 logger = logging.getLogger(__name__)
@@ -92,17 +97,49 @@ class BlogGenerator:
         
         try:
             client = self._get_client()
+            num_images = len(image_paths)
             
-            # 構造化プロンプトを使用
-            prompt = STRUCTURED_BLOG_PROMPT
+            # 画像の枚数に応じたプロンプトを選択
+            image_specific_prompt_part = ""
+            if num_images == 1:
+                image_specific_prompt_part = PROMPT_FOR_1_IMAGE
+            elif num_images == 2:
+                image_specific_prompt_part = PROMPT_FOR_2_IMAGES
+            elif num_images == 3:
+                image_specific_prompt_part = PROMPT_FOR_3_IMAGES
+            elif num_images == 4:
+                image_specific_prompt_part = PROMPT_FOR_4_IMAGES
+            else:
+                # 0枚または5枚以上の画像の場合 (現状のプロンプトは4枚までを想定)
+                # ここでは単純に1枚用のプロンプトを流用するか、エラーメッセージを返すことを検討
+                # 今回は、最大4枚という仕様に基づき、予期せぬ枚数の場合はログに警告を出し、
+                # デフォルトとして1枚用の指示（またはエラーを示す固定JSON）を返すことを想定する。
+                # より堅牢にするには、専用のエラー処理や5枚以上に対応したプロンプトが必要。
+                logger.warning(f"予期しない画像枚数です: {num_images}枚。1枚用のプロンプトで試行します。")
+                image_specific_prompt_part = PROMPT_FOR_1_IMAGE 
+                # または、以下のようにエラーを示すJSONを返すこともできる
+                # return {
+                #     "title": "エラー：対応していない画像枚数です",
+                #     "sections": [{"type": "text", "content": f"{num_images}枚の画像には対応していません。1～4枚の画像をアップロードしてください。"}]
+                # }
+
+            # ベースプロンプト、枚数別指示、ヘアスタイル情報サフィックスを結合
+            prompt = STRUCTURED_BLOG_PROMPT_BASE + "\n\n" + \
+                       image_specific_prompt_part + "\n\n" + \
+                       HAIR_INFO_PROMPT_SUFFIX
             
-            # ヘアスタイル情報がある場合、プロンプトを拡張
+            # ヘアスタイル情報がある場合、プロンプトを拡張 (この部分は枚数別パーツより後に結合する)
+            # ※ HAIR_INFO_PROMPT_SUFFIX がヘアスタイル情報の扱いを定義しているので、
+            #   この _enhance_prompt_with_hair_info は不要になるか、
+            #   HAIR_INFO_PROMPT_SUFFIX の内容と重複しないように調整が必要。
+            #   今回は HAIR_INFO_PROMPT_SUFFIX に寄せ、元の _enhance_prompt_with_hair_info の呼び出しはコメントアウトする。
             if hair_info and isinstance(hair_info, dict) and len(hair_info) > 0:
-                logger.info("ヘアスタイル情報を使用してプロンプトを拡張します")
-                prompt = self._enhance_prompt_with_hair_info(prompt, hair_info)
+                logger.info("ヘアスタイル情報をプロンプトに含めます (HAIR_INFO_PROMPT_SUFFIXにより処理)")
+                # prompt = self._enhance_prompt_with_hair_info(prompt, hair_info) # 元の処理はコメントアウト
             
             # コンテンツ生成
             logger.info("構造化ブログコンテンツの生成を開始します")
+            # logger.debug(f"最終プロンプト:\n{prompt}") # デバッグ用に最終プロンプトを出力
             generated_text = client.generate_content_from_images(image_paths, prompt)
             
             # 生成結果のログ出力を強化
@@ -142,7 +179,53 @@ class BlogGenerator:
                 structured_data = json.loads(json_str)
                 logger.info(f"JSON解析成功: title={structured_data.get('title', 'None')}, セクション数={len(structured_data.get('sections', []))}")
                 
-                # 必須フィールドの確認とデフォルト値の設定
+                # 生成されたJSONの画像セクション数とimageIndexを検証・修正する処理
+                if "sections" in structured_data and isinstance(structured_data["sections"], list):
+                    actual_image_sections = [s for s in structured_data["sections"] if isinstance(s, dict) and s.get("type") == "image"]
+                    num_actual_image_sections = len(actual_image_sections)
+
+                    if num_actual_image_sections != num_images:
+                        logger.warning(f"APIからの画像セクション数({num_actual_image_sections})がアップロード枚数({num_images})と異なります。調整を試みます。")
+                        
+                        # 足りない画像セクションを補完する (imageIndex が連番になるように)
+                        # まず、現在の imageIndex の最大値を確認
+                        existing_indices = {s.get("imageIndex") for s in actual_image_sections if isinstance(s.get("imageIndex"), int)}
+                        
+                        # 新しいセクションリストを作成
+                        new_sections = []
+                        output_image_index_counter = 0
+                        # 既存のテキストセクションと、期待される枚数分の画像セクションを交互に配置するイメージ
+                        # ただし、Geminiが生成したテキストセクションは尊重する
+                        
+                        temp_sections = [] # 一時的にセクションを保持
+                        # 既存のテキストを保持しつつ、画像を期待数分挿入
+                        # imageIndexの重複や欠番を修正し、期待する数の画像を配置
+                        # セクションの順番を保持しつつ、imageIndexを0から再割り当てし、不足分を追加
+                        
+                        # 既存のセクションをベースに再構築
+                        current_img_idx = 0
+                        for sec in structured_data["sections"]:
+                            if sec.get("type") == "image":
+                                if current_img_idx < num_images: # 画像の枚数上限を超えないように
+                                    new_sections.append({"type": "image", "imageIndex": current_img_idx})
+                                    current_img_idx += 1
+                                else:
+                                    logger.warning(f"期待枚数({num_images})を超える画像セクションをスキップ: {sec}")
+                            else:
+                                new_sections.append(sec) # テキストセクションはそのまま追加
+                        
+                        # それでも画像セクションが足りない場合、末尾に追加
+                        while current_img_idx < num_images:
+                            logger.info(f"画像セクションが不足しているため、imageIndex: {current_img_idx} を末尾に追加します。")
+                            new_sections.append({"type": "image", "imageIndex": current_img_idx})
+                            # 足りない画像の後にはデフォルトのテキストセクションも追加しておく（任意）
+                            new_sections.append({"type": "text", "content": f"(画像 {current_img_idx + 1} の説明)"}) 
+                            current_img_idx += 1
+                        
+                        structured_data["sections"] = new_sections
+                        logger.info(f"調整後のセクション数: {len(structured_data['sections'])}. うち画像セクション数: {len([s for s in structured_data['sections'] if s.get('type')=='image'])}個")
+
+                # 必須フィールドの確認とデフォルト値の設定 (この部分は元のままでも良いが、上記調整でカバーされる部分もある)
                 if "title" not in structured_data:
                     structured_data["title"] = "ヘアスタイルブログ"
                 
