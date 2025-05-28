@@ -269,6 +269,9 @@
         {% if stylists or coupons %}
         <div class="alert alert-success mb-4">
             <p class="mb-0"><i class="bi bi-check-circle"></i> サロン情報取得済み</p>
+            {% if salon_name %}
+            <p class="small mb-0"><strong>サロン名:</strong> {{ salon_name }}</p>
+            {% endif %}
             <p class="small mb-0">
                 スタイリスト: {{ stylists|length }}人 / 
                 クーポン: {{ coupons|length }}件
