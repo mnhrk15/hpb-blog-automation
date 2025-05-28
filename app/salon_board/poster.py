@@ -19,6 +19,11 @@ class SalonBoardPoster:
     _LOGIN_BUTTON_ALT = "a.common-CNCcommon__primaryBtn.loginBtnSize"
     _LOGIN_FORM = "#idPasswordInputForm"
     _DASHBOARD_GLOBAL_NAVI = "#globalNavi"
+    
+    # --- サロン一覧ページのセレクタ定義 ---
+    _SALON_LIST_TABLE = "#biyouStoreInfoArea"
+    _SALON_LIST_ROW = "#biyouStoreInfoArea > tbody > tr"
+    _SALON_LIST_NAME_CELL = "td.storeName"
     _NAVI_KEISAI_KANRI = "#globalNavi > ul.common-CLPcommon__globalNavi > li:nth-child(2) > a"
     _NAVI_BLOG = "#cmsForm > div > div > ul > li:nth-child(9) > a"
     _NAVI_NEW_POST = "#newPosts"
@@ -82,6 +87,8 @@ class SalonBoardPoster:
     ET_LOGIN_ROBOT_DETECTED = 'login_robot_detected'
     ET_LOGIN_DASHBOARD_TIMEOUT = 'login_dashboard_timeout'
     ET_LOGIN_EXCEPTION = 'login_exception'
+    ET_SALON_SELECT_FAILED = 'salon_select_failed'
+    ET_SALON_NOT_FOUND = 'salon_not_found'
 
     ET_NAV_GENERAL = 'navigation_general_error'
     ET_NAV_KEISAI_KANRI_FAILED = 'navigation_keisai_kanri_failed'
@@ -124,16 +131,20 @@ class SalonBoardPoster:
     ET_COUPON_SELECTION_UNEXPECTED = 'coupon_selection_unexpected_error'
     # --- エラータイプ定数 終了 ---
 
-    def __init__(self, screenshot_folder_path, headless=True, slow_mo=100):
+    def __init__(self, screenshot_folder_path, salon_name=None, salon_id=None, headless=True, slow_mo=100):
         """
         初期化メソッド
         
         Args:
             screenshot_folder_path (str): スクリーンショットの保存先フォルダパス。
+            salon_name (str, optional): 選択すべきサロン名。複数サロンがある場合に使用。
+            salon_id (str, optional): 選択すべきサロンID。複数サロンがある場合に優先的に使用。
             headless (bool): ヘッドレスモードで実行するかどうか。デフォルトはTrue（ヘッドレスモード）。
             slow_mo (int): アクションの間に入れる遅延時間（ミリ秒）。デバッグ時に視認性を高めるため。
         """
         self.screenshot_folder_path = screenshot_folder_path
+        self.salon_name = salon_name
+        self.salon_id = salon_id
         self.headless = headless
         self.slow_mo = slow_mo
         self.playwright = None
@@ -216,28 +227,46 @@ class SalonBoardPoster:
 
     def is_robot_detection_present(self):
         """
-        ロボット認証（CAPTCHA等）が検出されたかどうかを確認
+        ロボット検出が存在するかを確認する
         
         Returns:
-            bool: ロボット認証が検出された場合はTrue、そうでない場合はFalse
+            bool: ロボット検出が存在する場合はTrue、それ以外はFalse
         """
-        # まず、ページのURLやタイトルで判断
-        try:
-            current_url = self.page.url
-            page_title = self.page.title()
-            
-            # URLやタイトルに認証関連のキーワードがある場合
-            auth_keywords = ['captcha', 'recaptcha', 'verify', '認証', 'auth']
-            if any(keyword in current_url.lower() for keyword in auth_keywords) or \
-               any(keyword in page_title.lower() for keyword in auth_keywords):
-                logger.warning(f"URL/タイトルからロボット認証を検出: {current_url} / {page_title}")
-                return True
-        except Exception as e:
-            logger.error(f"URL/タイトル検証中のエラー: {e}")
+        current_url = self.page.url
+        page_title = self.page.title()
         
-        # 「画像認証」テキストを優先的に検索
+        # ブログ投稿関連の確認ページはロボット認証の対象外
+        if '/blog/blog/confirm' in current_url:
+            logger.info(f"ブログ投稿確認ページはロボット認証の対象外です: {current_url}")
+            return False
+            
+        # 投稿関連のページはロボット認証の対象外
+        if '/blog/blog/' in current_url and ('確認' in page_title or 'confirm' in current_url.lower()):
+            logger.info(f"ブログ関連ページはロボット認証の対象外です: {current_url}, タイトル: {page_title}")
+            return False
+        
+        # URLやタイトルの検査
+        auth_keywords = ['認証', 'verification', 'captcha', 'robot']
+        if any(keyword in current_url.lower() or keyword in page_title.lower() for keyword in auth_keywords):
+            logger.warning(f"認証関連キーワードが検出されました: URL={current_url}, Title={page_title}")
+            # ログイン関連ページでない場合は詳細チェック
+            if not ('/login' in current_url or '/CLP/login' in current_url):
+                logger.info(f"ログイン関連ページではないため、詳細な確認を行います: {current_url}")
+                return self._check_detailed_robot_detection()
+            return True
+            
+        # 画像認証というテキストがページ内に存在するか
+        return self._check_detailed_robot_detection()
+        
+    def _check_detailed_robot_detection(self):
+        """
+        ページ内の要素を詳細に確認し、ロボット認証が存在するか判定する
+        
+        Returns:
+            bool: ロボット認証が存在する場合はTrue、それ以外はFalse
+        """
         try:
-            has_image_auth = self.page.evaluate('''
+            has_image_auth = self.page.evaluate("""
                 () => {
                     const elements = document.querySelectorAll('th, td, div, p, span, label, h1, h2, h3, h4, h5, h6');
                     for (const el of elements) {
@@ -250,15 +279,24 @@ class SalonBoardPoster:
                             return true;
                         }
                     }
+                    // reCAPTCHAや他の典型的な認証要素をチェック
+                    if (document.querySelector('.g-recaptcha') ||
+                        document.querySelector('[data-sitekey]') ||
+                        document.querySelector('iframe[src*="recaptcha"]') ||
+                        document.querySelector('iframe[src*="captcha"]')) {
+                        return true;
+                    }
                     return false;
                 }
-            ''')
+            """)
             
             if has_image_auth:
-                logger.warning("テキスト「画像認証」が検出されました")
+                logger.warning("テキスト「画像認証」またはreCAPTCHA関連要素が検出されました")
                 return True
+            return False
         except Exception as e:
-            logger.error(f"画像認証テキスト検証中のエラー: {e}")
+            logger.error(f"ロボット認証の詳細チェック中にエラーが発生しました: {e}")
+            return False
         
         # 認証フォーム要素の存在チェック
         critical_selectors = [
@@ -286,7 +324,8 @@ class SalonBoardPoster:
                 "input[type='submit']"
             ]
             
-            login_texts = self.page.evaluate('''
+            # ログイン関連のテキストを確認
+            login_texts = self.page.evaluate("""
                 () => {
                     const elements = document.querySelectorAll('th, td, div, p, span, label, h1, h2, h3, h4, h5, h6');
                     for (const el of elements) {
@@ -301,7 +340,7 @@ class SalonBoardPoster:
                     }
                     return false;
                 }
-            ''')
+            """)
             
             # ログイン関連の要素があり、認証関連の要素がない場合は通常のログイン画面と判断
             if login_texts and any(self.page.query_selector(selector) for selector in login_indicators):
@@ -311,6 +350,140 @@ class SalonBoardPoster:
             logger.error(f"ログイン画面検証中のエラー: {e}")
             
         return False
+            
+    def is_salon_list_page(self):
+        """
+        現在のページがサロン一覧ページかどうかを確認する
+        
+        Returns:
+            bool: サロン一覧ページの場合はTrue、それ以外はFalse
+        """
+        try:
+            # サロン一覧テーブルの存在を確認
+            salon_table = self.page.query_selector(self._SALON_LIST_TABLE)
+            if salon_table:
+                logger.info("サロン一覧ページが検出されました")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"サロン一覧ページの検出中にエラーが発生しました: {e}")
+            return False
+            
+    def select_salon(self):
+        """
+        サロン一覧ページからサロンを選択する。サロンIDを優先的に使用し、およびサロン名を使用する。
+        
+        Returns:
+            dict: 処理結果を含む辞書
+                - success (bool): 成功したかどうか
+                - message (str): 処理結果のメッセージ
+                - screenshot_path (str): スクリーンショットのパス
+                - error_type (str): エラーの種類
+        """
+        default_success_result = {
+            'success': True, 'message': 'サロンの選択に成功しました。', 'screenshot_path': None, 'error_type': None
+        }
+        default_failure_result = {
+            'success': False, 'message': 'サロンの選択に失敗しました。', 'screenshot_path': None, 'error_type': self.ET_SALON_SELECT_FAILED
+        }
+        
+        # サロンIDとサロン名の両方がない場合はエラー
+        if not self.salon_id and not self.salon_name:
+            logger.error("サロンIDまたはサロン名が指定されていません")
+            ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "salon_id_name_not_specified_")
+            return {**default_failure_result, 
+                    'message': "サロンIDまたはサロン名が指定されていません。", 
+                    'screenshot_path': ss_path, 
+                    'error_type': self.ET_SALON_NOT_FOUND}
+        
+        try:
+            # サロン一覧の行を取得
+            salon_rows = self.page.query_selector_all(self._SALON_LIST_ROW)
+            if not salon_rows:
+                logger.error("サロン一覧の行が見つかりませんでした")
+                ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "salon_rows_not_found_")
+                return {**default_failure_result, 
+                        'message': "サロン一覧の行が見つかりませんでした。", 
+                        'screenshot_path': ss_path}
+            
+            # 各行をチェックして一致するサロンを探す
+            found = False
+            for row in salon_rows:
+                # サロンIDを取得
+                salon_id_cell = row.query_selector("td.mod_center")
+                if not salon_id_cell:
+                    continue
+                
+                salon_id_text = salon_id_cell.text_content().strip()
+                
+                # サロン名セルを取得
+                name_cell = row.query_selector(self._SALON_LIST_NAME_CELL)
+                if not name_cell:
+                    continue
+                    
+                # サロン名のリンクを取得
+                salon_link = name_cell.query_selector("a")
+                if not salon_link:
+                    continue
+                
+                # リンクのID属性を取得
+                link_id = salon_link.get_attribute("id")
+                
+                # リンクのテキストを取得
+                link_text = salon_link.text_content().strip()
+                logger.info(f"サロン情報を確認: ID={salon_id_text or link_id}, 名前={link_text}")
+                
+                # サロンIDが一致する場合（最優先）
+                if self.salon_id and (self.salon_id == salon_id_text or self.salon_id == link_id):
+                    logger.info(f"サロンID '{self.salon_id}' が一致するサロンが見つかりました: {link_text}")
+                    salon_link.click()
+                    found = True
+                    break
+                # サロン名が一致する場合（次候補）
+                elif self.salon_name and (self.salon_name in link_text or link_text in self.salon_name):
+                    logger.info(f"サロン名 '{self.salon_name}' が一致するサロンが見つかりました: {link_text}")
+                    salon_link.click()
+                    found = True
+                    break
+            
+            if not found:
+                # エラーメッセージの設定
+                error_message = ""
+                if self.salon_id and self.salon_name:
+                    error_message = f"指定されたサロンID '{self.salon_id}' またはサロン名 '{self.salon_name}' に一致するサロンが見つかりませんでした。"
+                elif self.salon_id:
+                    error_message = f"指定されたサロンID '{self.salon_id}' に一致するサロンが見つかりませんでした。"
+                else:
+                    error_message = f"指定されたサロン名 '{self.salon_name}' に一致するサロンが見つかりませんでした。"
+                
+                logger.error(error_message)
+                ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "salon_not_found_")
+                return {**default_failure_result, 
+                        'message': error_message, 
+                        'screenshot_path': ss_path, 
+                        'error_type': self.ET_SALON_NOT_FOUND}
+            
+            # クリック後、ページ遷移の完了を待つ
+            time.sleep(2)  # 初期の待機
+            
+            # ダッシュボードの表示を待機
+            try:
+                self.page.wait_for_selector(self._DASHBOARD_GLOBAL_NAVI, timeout=self.default_timeout, state="visible")
+                logger.info("サロン選択後のダッシュボード表示を確認しました")
+                return default_success_result
+            except TimeoutError:
+                logger.error("サロン選択後のダッシュボード表示がタイムアウトしました")
+                ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "salon_select_dashboard_timeout_")
+                return {**default_failure_result, 
+                        'message': "サロン選択後のダッシュボード表示がタイムアウトしました。", 
+                        'screenshot_path': ss_path}
+                
+        except Exception as e:
+            logger.error(f"サロン選択中に予期せぬエラーが発生しました: {e}", exc_info=True)
+            ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "salon_select_exception_")
+            return {**default_failure_result, 
+                    'message': f"サロン選択中に予期せぬエラーが発生しました: {str(e)}", 
+                    'screenshot_path': ss_path}
 
     def login(self, user_id, password):
         """
@@ -514,17 +687,18 @@ class SalonBoardPoster:
                         'error_type': self.ET_LOGIN_ROBOT_DETECTED,
                         'robot_detected': True}
             
-            logger.info("ダッシュボードの表示を待機します...")
+            logger.info("ダッシュボードまたはサロン一覧の表示を待機します...")
+            
+            # まずダッシュボードが表示されるか確認
             try:
                 # 定数を使用
-                self.page.wait_for_selector(self._DASHBOARD_GLOBAL_NAVI, timeout=self.default_timeout, state="visible")
+                self.page.wait_for_selector(self._DASHBOARD_GLOBAL_NAVI, timeout=10000, state="visible")
                 logger.info("ダッシュボードの表示を確認しました")
-            except TimeoutError as e:
-                current_url = self.page.url
-                current_title = self.page.title()
-                logger.error(f"ログイン後のダッシュボード表示がタイムアウトしました。現在のURL: {current_url}, タイトル: {current_title}")
                 
-                # タイムアウト時にも認証確認
+            except TimeoutError:
+                logger.info("ダッシュボードが表示されませんでした。サロン一覧ページの確認を行います。")
+                
+                # ロボット認証の確認
                 if self.is_robot_detection_present():
                     logger.error("ダッシュボード表示待機中に画像認証が検出されました。")
                     ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "dash_timeout_robot_")
@@ -534,11 +708,41 @@ class SalonBoardPoster:
                             'error_type': self.ET_LOGIN_ROBOT_DETECTED, 
                             'robot_detected': True}
                 
-                ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "login_timeout_")
-                return {**default_failure_result, 
-                        'message': f"ログイン後のダッシュボード表示がタイムアウトしました。現在のURL: {current_url}, Title: {current_title}", 
-                        'screenshot_path': ss_path, 
-                        'error_type': self.ET_LOGIN_DASHBOARD_TIMEOUT}
+                # サロン一覧ページか確認
+                if self.is_salon_list_page():
+                    logger.info("サロン一覧ページが表示されました。サロンの選択を行います。")
+                    
+                    # サロン選択を実行（サロンIDまたはサロン名を使用）
+                    if self.salon_id or self.salon_name:
+                        if self.salon_id:
+                            logger.info(f"サロンID '{self.salon_id}' に一致するサロンを選択します")
+                        else:
+                            logger.info(f"サロン名 '{self.salon_name}' に一致するサロンを選択します")
+                            
+                        salon_select_result = self.select_salon()
+                        
+                        if not salon_select_result['success']:
+                            logger.error("サロンの選択に失敗しました")
+                            return salon_select_result  # サロン選択のエラー結果をそのまま返す
+                        
+                        logger.info("サロンの選択に成功しました")
+                    else:
+                        logger.error("複数サロンがありますが、サロンIDまたはサロン名が指定されていません")
+                        ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "salon_id_name_not_specified_")
+                        return {**default_failure_result, 
+                                'message': "複数サロンがありますが、サロンIDまたはサロン名が指定されていません。", 
+                                'screenshot_path': ss_path, 
+                                'error_type': self.ET_SALON_NOT_FOUND}
+                else:
+                    # ダッシュボードでもサロン一覧でもない場合はエラー
+                    current_url = self.page.url
+                    current_title = self.page.title()
+                    logger.error(f"ログイン後に予期しないページが表示されました。現在のURL: {current_url}, タイトル: {current_title}")
+                    ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "login_unexpected_page_")
+                    return {**default_failure_result, 
+                            'message': f"ログイン後に予期しないページが表示されました。現在のURL: {current_url}, Title: {current_title}", 
+                            'screenshot_path': ss_path, 
+                            'error_type': self.ET_LOGIN_DASHBOARD_TIMEOUT}
                 
             if self.is_robot_detection_present():
                 logger.error("ログイン後にロボット認証が検出されました。処理を中断します。")

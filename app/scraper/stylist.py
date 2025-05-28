@@ -25,6 +25,7 @@ class StylistScraper:
         self.base_url = base_url
         self._stylists = []
         self._salon_name = None
+        self._salon_id = None
         self._headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
@@ -198,3 +199,56 @@ class StylistScraper:
         except Exception as e:
             logger.error(f"サロン名の解析に失敗: {e}")
             raise 
+            
+    def get_salon_id(self, force_refresh=False):
+        """
+        サロンIDを取得する
+        
+        Args:
+            force_refresh (bool, optional): キャッシュがある場合も強制的に再取得するかどうか
+            
+        Returns:
+            str: サロンID（例: H000232182）
+        """
+        if not self.base_url:
+            raise ValueError("ベースURLが設定されていません。set_base_url()メソッドで設定してください。")
+        
+        # キャッシュがあり強制更新でない場合はキャッシュを返す
+        if self._salon_id and not force_refresh:
+            return self._salon_id
+        
+        # URLからサロンIDを抽出
+        pattern = r'(?:sln|slnH)(H\d+)'
+        match = re.search(pattern, self.base_url)
+        
+        if match:
+            # Hが付いている場合はそのまま使用
+            self._salon_id = match.group(1)
+            logger.info(f"URLからサロンIDを取得しました: {self._salon_id}")
+            return self._salon_id
+        
+        # URLから抽出できない場合はページ内容から抽出を試みる
+        try:
+            logger.info(f"ページ内容からサロンIDの抽出を開始: {self.base_url}")
+            response = requests.get(self.base_url, headers=self._headers)
+            response.raise_for_status()  # HTTPエラーがあれば例外を発生
+            
+            # ページ内のあらゆるHで始まる数字を探す
+            pattern = r'H\d{9}'
+            matches = re.findall(pattern, response.text)
+            
+            if matches:
+                self._salon_id = matches[0]
+                logger.info(f"ページ内容からサロンIDを取得しました: {self._salon_id}")
+                return self._salon_id
+            
+            # 見つからない場合
+            logger.warning("サロンIDの取得に失敗しました。URLを確認してください。")
+            return None
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"サロンIDの取得に失敗: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"サロンIDの解析に失敗: {e}")
+            raise
