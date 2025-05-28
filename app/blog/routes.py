@@ -21,6 +21,7 @@ GENERATED_CONTENT_KEY = 'blog_generated_content'
 HAIR_INFO_KEY = 'hair_style_info'
 SALON_URL_KEY = 'salon_url'
 SALON_NAME_KEY = 'salon_name'
+SALON_ID_KEY = 'salon_id'
 STYLISTS_KEY = 'stylists'
 COUPONS_KEY = 'coupons'
 SELECTED_TEMPLATE_KEY = 'selected_template'
@@ -390,6 +391,10 @@ def fetch_salon_info():
             salon_name = stylist_scraper.get_salon_name()
             logger.info(f"サロン名を取得しました: {salon_name}")
             
+            # サロンIDを取得
+            salon_id = stylist_scraper.get_salon_id()
+            logger.info(f"サロンIDを取得しました: {salon_id}")
+            
             # スタイリスト情報を取得
             stylists = stylist_scraper.get_stylists()
             
@@ -398,21 +403,24 @@ def fetch_salon_info():
             coupons = [c.get('name') for c in coupons_data if c.get('name')] # クーポン名のリストに変換
             
             logger.debug(f"SALON_NAME_KEY fetched: {salon_name}")
+            logger.debug(f"SALON_ID_KEY fetched: {salon_id}")
             logger.debug(f"STYLISTS_KEY fetched: {stylists}")
             logger.debug(f"COUPONS_KEY fetched (names only): {coupons}")
             
             # セッションに保存
             session[SALON_NAME_KEY] = salon_name
+            session[SALON_ID_KEY] = salon_id
             session[STYLISTS_KEY] = stylists
             session[COUPONS_KEY] = coupons # クーポン名のリストをセッションに保存
             session.modified = True
             
             logger.debug(f"SALON_NAME_KEY in session after set: {session.get(SALON_NAME_KEY)}")
+            logger.debug(f"SALON_ID_KEY in session after set: {session.get(SALON_ID_KEY)}")
             logger.debug(f"STYLISTS_KEY in session after set: {session.get(STYLISTS_KEY)}")
             logger.debug(f"COUPONS_KEY in session after set: {session.get(COUPONS_KEY)}")
             logger.debug(f"SALON_URL_KEY in session after set: {session.get(SALON_URL_KEY)}")
             
-            flash(f'サロン情報を取得しました。サロン名: {salon_name}、スタイリスト: {len(stylists)}人、クーポン: {len(coupons)}件', 'success')
+            flash(f'サロン情報を取得しました。サロン名: {salon_name}、サロンID: {salon_id}、スタイリスト: {len(stylists)}人、クーポン: {len(coupons)}件', 'success')
         except Exception as e:
             logger.error(f"サロン情報取得エラー: {str(e)}", exc_info=True)
             flash(f'サロン情報の取得中にエラーが発生しました: {str(e)}', 'error')
@@ -541,8 +549,16 @@ def post_to_salon_board():
         os.makedirs(screenshot_path, exist_ok=True)
 
     try:
+        # セッションからサロン名とサロンIDを取得
+        salon_name = session.get(SALON_NAME_KEY, '')
+        salon_id = session.get(SALON_ID_KEY, '')
+        logger.info(f"サロンボード投稿処理にサロン名を渡します: {salon_name}")
+        logger.info(f"サロンボード投稿処理にサロンIDを渡します: {salon_id}")
+        
         poster = SalonBoardPoster(
             screenshot_folder_path=current_app.config.get('SCREENSHOT_FOLDER'),
+            salon_name=salon_name,  # スクレイピングで取得したサロン名を渡す
+            salon_id=salon_id,     # スクレイピングで取得したサロンIDを渡す
             # headless=not current_app.debug, # 例: デバッグ時は非ヘッドレス
             # slow_mo=200 if current_app.debug else 0 # 例: デバッグ時はスロー
         )
