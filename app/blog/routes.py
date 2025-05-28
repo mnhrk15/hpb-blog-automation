@@ -20,6 +20,7 @@ UPLOADED_IMAGES_KEY = 'blog_uploaded_images'
 GENERATED_CONTENT_KEY = 'blog_generated_content'
 HAIR_INFO_KEY = 'hair_style_info'
 SALON_URL_KEY = 'salon_url'
+SALON_NAME_KEY = 'salon_name'
 STYLISTS_KEY = 'stylists'
 COUPONS_KEY = 'coupons'
 SELECTED_TEMPLATE_KEY = 'selected_template'
@@ -57,6 +58,7 @@ def index():
     
     # サロン情報関連のセッションもクリアした方が良いかもしれない
     session.pop(SALON_URL_KEY, None)
+    session.pop(SALON_NAME_KEY, None)
     session.pop(STYLISTS_KEY, None)
     session.pop(COUPONS_KEY, None)
     session.modified = True # クリアした場合も変更を通知
@@ -139,8 +141,10 @@ def generate():
     logger.debug(f"Retrieved from session ({HAIR_INFO_KEY}): {hair_info}")
     
     salon_url = session.get(SALON_URL_KEY, '')
+    salon_name = session.get(SALON_NAME_KEY, '')
     stylists = session.get(STYLISTS_KEY, [])
     coupons = session.get(COUPONS_KEY, [])
+    logger.debug(f"SALON_NAME_KEY in generate: {salon_name}")
     logger.debug(f"STYLISTS_KEY in generate: {stylists}")
     logger.debug(f"COUPONS_KEY in generate: {coupons}")
     logger.debug(f"SALON_URL_KEY in generate: {salon_url}")
@@ -185,6 +189,7 @@ def generate():
         generated_content=generated_content,
         hair_info=hair_info,
         salon_url=salon_url,
+        salon_name=salon_name,
         stylists=stylists,
         coupons=coupons,
         selected_template=selected_template,
@@ -380,24 +385,34 @@ def fetch_salon_info():
         try:
             logger.info(f"サロン情報を取得します: {salon_url}")
             stylist_scraper = StylistScraper(salon_url)
+            
+            # サロン名を取得
+            salon_name = stylist_scraper.get_salon_name()
+            logger.info(f"サロン名を取得しました: {salon_name}")
+            
+            # スタイリスト情報を取得
             stylists = stylist_scraper.get_stylists()
             
             coupon_scraper = CouponScraper(salon_url)
             coupons_data = coupon_scraper.get_coupons(full=True) # 辞書のリストが返る
             coupons = [c.get('name') for c in coupons_data if c.get('name')] # クーポン名のリストに変換
             
+            logger.debug(f"SALON_NAME_KEY fetched: {salon_name}")
             logger.debug(f"STYLISTS_KEY fetched: {stylists}")
             logger.debug(f"COUPONS_KEY fetched (names only): {coupons}")
             
+            # セッションに保存
+            session[SALON_NAME_KEY] = salon_name
             session[STYLISTS_KEY] = stylists
             session[COUPONS_KEY] = coupons # クーポン名のリストをセッションに保存
             session.modified = True
             
+            logger.debug(f"SALON_NAME_KEY in session after set: {session.get(SALON_NAME_KEY)}")
             logger.debug(f"STYLISTS_KEY in session after set: {session.get(STYLISTS_KEY)}")
             logger.debug(f"COUPONS_KEY in session after set: {session.get(COUPONS_KEY)}")
             logger.debug(f"SALON_URL_KEY in session after set: {session.get(SALON_URL_KEY)}")
             
-            flash(f'サロン情報を取得しました。スタイリスト: {len(stylists)}人、クーポン: {len(coupons)}件', 'success')
+            flash(f'サロン情報を取得しました。サロン名: {salon_name}、スタイリスト: {len(stylists)}人、クーポン: {len(coupons)}件', 'success')
         except Exception as e:
             logger.error(f"サロン情報取得エラー: {str(e)}", exc_info=True)
             flash(f'サロン情報の取得中にエラーが発生しました: {str(e)}', 'error')
