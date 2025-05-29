@@ -1421,17 +1421,19 @@ try {{     // Escaped
                    }
 
     def select_coupon(self, coupon_names):
-        """クーポンを選択する (filterメソッド使用版)"""
+        """クーポンを選択する (単一クーポン選択対応版)"""
+        # クーポン名が複数形式で渡された場合でも単一のものだけを使用
+        coupon_name = coupon_names[0] if isinstance(coupon_names, list) else coupon_names
+        
         default_success_result = {
             'success': True, 
-            'message': f'クーポン {coupon_names} の選択に成功しました。', 
+            'message': f'クーポン {coupon_name} の選択に成功しました。', 
             'screenshot_path': None, 
             'error_type': None
         }
-        coupon_names_str = ", ".join(coupon_names) if isinstance(coupon_names, list) else str(coupon_names)
         default_failure_result = {
             'success': False, 
-            'message': f'クーポン ({coupon_names_str}) の選択に失敗しました。', 
+            'message': f'クーポン ({coupon_name}) の選択に失敗しました。', 
             'screenshot_path': None, 
             'error_type': self.ET_COUPON_SELECTION_UNEXPECTED
         }
@@ -1505,47 +1507,218 @@ try {{     // Escaped
                          'error_type': self.ET_COUPON_MODAL_TIMEOUT}
 
             logger.info("クーポン選択処理を開始します (filter使用)")
-            all_coupons_selected_successfully = True
-            for coupon_name in coupon_names:
-                logger.info(f"クーポン '{coupon_name}' を選択します")
-                found_and_clicked = False
-                cleaned_coupon_name = coupon_name.strip()
-                if not cleaned_coupon_name: 
-                    logger.warning("空のクーポン名のためスキップ")
-                    continue
-                try:
-                    all_labels = self.page.locator(f"{coupon_modal_selectors[0]} {self._BLOG_FORM_COUPON_LABEL}")
-                    logger.debug(f"モーダル内のラベル候補数: {all_labels.count()}")
-                    for i in range(all_labels.count()):
-                        label = all_labels.nth(i)
-                        coupon_text_element = label.locator(self._BLOG_FORM_COUPON_TEXT)
-                        if coupon_text_element.count() > 0:
-                            actual_text = coupon_text_element.first.inner_text().strip()
-                            logger.debug(f"ラベル {i} のテキスト: '{actual_text}'")
-                            if cleaned_coupon_name.lower() in actual_text.lower():
-                                logger.info(f"クーポン '{cleaned_coupon_name}' がテキスト '{actual_text}' にマッチしました。クリックを試みます。")
+            # 単一クーポンの選択
+            logger.info(f"クーポン '{coupon_name}' を選択します")
+            found_and_clicked = False
+            cleaned_coupon_name = coupon_name.strip()
+            if not cleaned_coupon_name: 
+                logger.warning("空のクーポン名のためスキップ")
+                ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "empty_coupon_name_")
+                return {**default_failure_result, 
+                        'message': "クーポン名が空です。",
+                        'screenshot_path': ss_path,
+                        'error_type': self.ET_COUPON_SELECTION_ITEM_NOT_FOUND}
+                
+            try:
+                # 親要素を検索範囲にすることでより広範にクーポン要素を検索
+                coupon_items = self.page.locator(f"{coupon_modal_selectors[0]} .couponListTextWrap")
+                logger.debug(f"モーダル内のクーポン候補数: {coupon_items.count()}")
+                
+                # 全角/半角の変換関数
+                def normalize_text(text):
+                    # 全角/半角数字、記号を統一
+                    import unicodedata
+                    normalized = unicodedata.normalize('NFKC', text)
+                    # 記号の正規化（￥→¥など）
+                    return normalized.replace('￥', '¥')
+                
+                # 検索用に正規化したクーポン名
+                normalized_coupon_name = normalize_text(cleaned_coupon_name).lower()
+                logger.debug(f"検索用に正規化したクーポン名: '{normalized_coupon_name}'")
+                
+                for i in range(coupon_items.count()):
+                    coupon_item = coupon_items.nth(i)
+                    # p.couponText要素内のテキストを取得
+                    coupon_text_element = coupon_item.locator("p.couponText")
+                    
+                    if coupon_text_element.count() > 0:
+                        actual_text = coupon_text_element.first.inner_text().strip()
+                        normalized_actual_text = normalize_text(actual_text).lower()
+                        logger.debug(f"クーポン {i} のテキスト: '{actual_text}'")
+                        logger.debug(f"正規化したテキスト: '{normalized_actual_text}'")
+                        
+                        # 正規化したテキストで比較
+                        if normalized_coupon_name in normalized_actual_text or actual_text.lower() in cleaned_coupon_name.lower():
+                            logger.info(f"クーポン '{cleaned_coupon_name}' がテキスト '{actual_text}' にマッチしました。")
+                            
+                            # まずラベル要素の取得を試みる
+                            try:
+                                # 直接の親要素を取得
+                                parent_element = coupon_item.locator("xpath=..")
+                                label_tag = parent_element.evaluate("node => node.tagName.toLowerCase()")
+                                logger.debug(f"親要素のタグ: {label_tag}")
+                                
+                                # labelタグでない場合、さらに上の要素も確認
+                                if label_tag != "label":
+                                    try:
+                                        # さらに上の要素を取得
+                                        parent_label = parent_element.locator("xpath=..")
+                                        grand_parent_tag = parent_label.evaluate("node => node.tagName.toLowerCase()")
+                                        logger.debug(f"さらに上の要素のタグ: {grand_parent_tag}")
+                                        if grand_parent_tag == "label":
+                                            logger.info("ラベル要素が見つかりました（祖父要素）")
+                                        else:
+                                            # 元の親要素に戻す
+                                            parent_label = parent_element
+                                    except Exception:
+                                        parent_label = parent_element
+                                else:
+                                    parent_label = parent_element
+                                    
+                                # スクロールとクリック
+                                parent_label.scroll_into_view_if_needed()
+                                time.sleep(0.5)
+                                parent_label.click(timeout=5000)
+                                found_and_clicked = True
+                                logger.info(f"クーポン '{cleaned_coupon_name}' をクリックしました。")
+                                time.sleep(0.3)
+                                break
+                            except Exception as click_err:
+                                logger.warning(f"親要素クリックに失敗: {click_err}。ラベル要素の直接検索を試みます。")
+                                
+                                # ラベル要素の直接検索を試みる
                                 try:
-                                    label.scroll_into_view_if_needed(); time.sleep(0.5)
-                                    label.click(timeout=5000); found_and_clicked = True
-                                    logger.info(f"クーポン '{cleaned_coupon_name}' をクリックしました。"); time.sleep(0.3); break
-                                except Exception as click_err:
-                                     logger.warning(f"クーポン '{cleaned_coupon_name}' のクリックに失敗: {click_err}。念のため次の候補も探します。")
-                        else: 
-                            logger.debug(f"ラベル {i} に {self._BLOG_FORM_COUPON_TEXT} が見つかりません。")
-                    if not found_and_clicked: 
-                        logger.warning(f"クーポン '{cleaned_coupon_name}' がモーダル内で見つからないか、クリックできませんでした。")
-                        all_coupons_selected_successfully = False
-                except Exception as e: 
-                    logger.error(f"クーポン '{coupon_name}' の選択処理中に予期せぬエラー: {e}", exc_info=True)
-                    all_coupons_selected_successfully = False
-            
-            if not all_coupons_selected_successfully:
-                 logger.error("一部またはすべてのクーポンの選択に失敗しました。")
-                 ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "coupon_item_select_")
-                 return {**default_failure_result, 
-                         'message': "一部または全てのクーポンの選択に失敗しました。",
-                         'screenshot_path': ss_path,
-                         'error_type': self.ET_COUPON_SELECTION_ITEM_NOT_FOUND}
+                                    # クーポンを含むラベル要素を直接検索
+                                    selector = f"{coupon_modal_selectors[0]} label:has(p.couponText:text-matches('{actual_text}', 'i'))"
+                                    label_element = self.page.locator(selector)
+                                    if label_element.count() > 0:
+                                        label_element.scroll_into_view_if_needed()
+                                        time.sleep(0.5)
+                                        label_element.click(timeout=5000)
+                                        found_and_clicked = True
+                                        logger.info(f"セレクタ検索でクーポン '{cleaned_coupon_name}' をクリックしました。")
+                                        time.sleep(0.3)
+                                        break
+                                    else:
+                                        logger.warning("直接セレクタでのラベル要素が見つかりませんでした。JavaScriptでのクリックを試みます。")
+                                except Exception as label_err:
+                                    logger.warning(f"ラベル要素の直接検索でもエラー: {label_err}")
+                                
+                                # JavaScriptでのクリック試行
+                                try:
+                                    # 親要素をJavaScriptでクリック
+                                    coupon_item.evaluate("""
+                                    (node) => {
+                                        // 親要素のラベルを見つける
+                                        let current = node;
+                                        while (current && current.tagName.toLowerCase() !== 'label') {
+                                            current = current.parentElement;
+                                            if (!current) break;
+                                        }
+                                        // ラベルが見つかればクリック
+                                        if (current) {
+                                            current.click();
+                                            return true;
+                                        }
+                                        // 見つからなければ一番近い親でクリック
+                                        else {
+                                            node.parentElement.click();
+                                            return false;
+                                        }
+                                    }""")
+                                    found_and_clicked = True
+                                    logger.info(f"クーポン '{cleaned_coupon_name}' をJavaScriptでクリックしました。")
+                                    time.sleep(0.3)
+                                    break
+                                except Exception as js_err:
+                                    logger.error(f"JavaScriptによるクリックも失敗: {js_err}")
+                    else:
+                        logger.debug(f"クーポン {i} に p.couponText が見つかりません。")
+                
+                # 一致しなかった場合、さらに絞り込んだ特殊な検索を試みる
+                if not found_and_clicked:
+                    logger.info("標準検索で見つからなかったため、特殊検索を試みます")
+                    try:
+                        # 直接テキストを含むp.couponTextを持つlabelを検索
+                        for keyword in cleaned_coupon_name.split():
+                            if len(keyword) < 3:
+                                continue  # 短すぎるキーワードはスキップ
+                            
+                            # キーワードでp.couponTextを検索
+                            try:
+                                direct_selector = f"{coupon_modal_selectors[0]} label p.couponText:text-matches('{keyword}', 'i')"
+                                keyword_matches = self.page.locator(direct_selector)
+                                
+                                if keyword_matches.count() > 0:
+                                    # 見つかった要素の親ラベルをクリック
+                                    for j in range(keyword_matches.count()):
+                                        try:
+                                            match_text = keyword_matches.nth(j).inner_text().strip()
+                                            logger.debug(f"キーワード '{keyword}' に一致: '{match_text}'")
+                                            
+                                            # ラベル要素を取得
+                                            label = keyword_matches.nth(j).locator("xpath=ancestor::label")
+                                            label.scroll_into_view_if_needed()
+                                            time.sleep(0.5)
+                                            label.click(timeout=5000)
+                                            found_and_clicked = True
+                                            logger.info(f"キーワード '{keyword}' でクーポンをクリックしました: '{match_text}'")
+                                            time.sleep(0.3)
+                                            break
+                                        except Exception as keyword_click_err:
+                                            logger.warning(f"キーワード一致要素のクリックに失敗: {keyword_click_err}")
+                                    
+                                    if found_and_clicked:
+                                        break
+                            except Exception as keyword_err:
+                                logger.warning(f"キーワード '{keyword}' での検索中にエラー: {keyword_err}")
+                    except Exception as special_search_err:
+                        logger.warning(f"特殊検索中にエラー: {special_search_err}")
+                
+                if not found_and_clicked:
+                    logger.warning(f"クーポン '{cleaned_coupon_name}' がモーダル内で見つからないか、クリックできませんでした。フォールバックとして最初のクーポンを選択します。")
+                    ss_path = self.take_screenshot(prefix="fallback_coupon_selection_")
+                    
+                    # フォールバック: 最初のクーポンを選択
+                    try:
+                        # モーダル内の最初のラベル要素を選択
+                        first_label = self.page.locator(f"{coupon_modal_selectors[0]} label").first
+                        if first_label.count() > 0:
+                            # ラベル要素のテキストを取得
+                            try:
+                                coupon_text_el = first_label.locator("p.couponText")
+                                first_coupon_text = coupon_text_el.inner_text().strip() if coupon_text_el.count() > 0 else "テキストなし"
+                            except Exception:
+                                first_coupon_text = "テキスト取得不可"
+                            
+                            # スクロールとクリック
+                            first_label.scroll_into_view_if_needed()
+                            time.sleep(0.5)
+                            first_label.click(timeout=5000)
+                            logger.info(f"フォールバック: 最初のクーポン '{first_coupon_text}' を選択しました")
+                            found_and_clicked = True
+                            
+                            # 成功結果を返すが、メッセージにフォールバック情報を含める
+                            return {**default_success_result, 
+                                    'message': f"指定したクーポン '{cleaned_coupon_name}' が見つからなかったため、最初のクーポン '{first_coupon_text}' を選択しました。",
+                                    'screenshot_path': ss_path}
+                        else:
+                            logger.error("フォールバック失敗: モーダル内にラベル要素が見つかりません")
+                    except Exception as fallback_err:
+                        logger.error(f"フォールバック処理中にエラーが発生しました: {fallback_err}")
+                    
+                    # フォールバックも失敗した場合はエラーを返す
+                    return {**default_failure_result, 
+                            'message': f"クーポン '{cleaned_coupon_name}' が見つからず、フォールバックの最初のクーポン選択も失敗しました。",
+                            'screenshot_path': ss_path,
+                            'error_type': self.ET_COUPON_SELECTION_ITEM_NOT_FOUND}
+            except Exception as e:
+                logger.error(f"クーポン '{coupon_name}' の選択処理中に予期せぬエラー: {e}", exc_info=True)
+                ss_path = self.take_screenshot(prefix=self._FAILURE_SCREENSHOT_PREFIX + "coupon_select_exception_")
+                return {**default_failure_result, 
+                        'message': f"クーポン選択処理中に予期せぬエラーが発生しました: {str(e)}",
+                        'screenshot_path': ss_path,
+                        'error_type': self.ET_COUPON_SELECTION_UNEXPECTED}
 
             logger.info("「設定する」ボタンをクリックします")
             try:
